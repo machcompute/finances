@@ -85,10 +85,9 @@ export function exportToOFX(txs: Transaction[]): string {
       const trntype = tx.kind === "income" ? "CREDIT" : "DEBIT";
       const fitid = fitidFromId(tx.id);
       const name = escapeXML(tx.category).slice(0, 32);
-      const category = escapeXML(tx.category);
-      const memoLine = tx.note
-        ? `\n        <MEMO>${escapeXML(tx.note)}</MEMO>`
-        : "";
+      const memoText = tx.note
+        ? `[${tx.category}] ${tx.note}`
+        : `[${tx.category}]`;
       return (
         `      <STMTTRN>\n` +
         `        <TRNTYPE>${trntype}</TRNTYPE>\n` +
@@ -96,7 +95,7 @@ export function exportToOFX(txs: Transaction[]): string {
         `        <TRNAMT>${amount}</TRNAMT>\n` +
         `        <FITID>${fitid}</FITID>\n` +
         `        <NAME>${name}</NAME>\n` +
-        `        <CATEGORY>${category}</CATEGORY>${memoLine}\n` +
+        `        <MEMO>${escapeXML(memoText)}</MEMO>\n` +
         `      </STMTTRN>`
       );
     })

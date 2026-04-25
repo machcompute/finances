@@ -217,8 +217,26 @@ export function importOFX(text: string): OFXImportResult {
       continue;
     }
     const kind: TransactionKind = p.amount >= 0 ? "income" : "expense";
-    const rawCategory = (p.category ?? p.name ?? "").trim();
+
+    let memoCategory: string | undefined;
+    let note: string | undefined;
+    if (p.memo) {
+      const m = p.memo.match(/^\[([^\]]+)\]\s*(.*)$/);
+      if (m) {
+        memoCategory = m[1].trim() || undefined;
+        note = m[2].trim() || undefined;
+      } else {
+        note = p.memo;
+      }
+    }
+    const rawCategory = (
+      memoCategory ??
+      p.category ??
+      p.name ??
+      ""
+    ).trim();
     const category = rawCategory || "Other";
+
     const lc = category.toLowerCase();
     if (!lcIndex[kind].has(lc)) {
       lcIndex[kind].add(lc);
@@ -231,7 +249,7 @@ export function importOFX(text: string): OFXImportResult {
       amount: Math.abs(p.amount),
       category,
       date: p.date,
-      note: p.memo,
+      note,
     });
   }
 

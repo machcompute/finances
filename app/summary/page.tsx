@@ -2,9 +2,19 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
 import {
+  Transaction,
   formatAmount,
   summarize,
   useTransactions,
@@ -13,6 +23,7 @@ import {
 export default function SummaryPage() {
   const txs = useTransactions();
   const summary = useMemo(() => summarize(txs), [txs]);
+  const balanceSeries = useMemo(() => buildBalanceSeries(txs), [txs]);
 
   const expenseEntries = Object.entries(summary.byCategory.expense).sort(
     (a, b) => b[1] - a[1],
@@ -76,7 +87,26 @@ export default function SummaryPage() {
         </div>
       </section>
 
-      <section className="py-20 lg:py-28 flex-1">
+      <section className="py-20 lg:py-28">
+        <div className="max-w-7xl mx-auto px-6">
+          <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
+            Balance over time
+          </h2>
+          <p className="mt-3 text-mc-gray text-lg max-w-2xl">
+            Cumulative balance as transactions accumulate.
+          </p>
+
+          {balanceSeries.length === 0 ? (
+            <p className="mt-12 text-mc-gray">No transactions yet.</p>
+          ) : (
+            <div className="mt-12 p-6 rounded-2xl border border-mc-gray/15 bg-white">
+              <BalanceChart data={balanceSeries} />
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="py-20 lg:py-28 bg-mc-dark/[0.02] flex-1">
         <div className="max-w-7xl mx-auto px-6">
           <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
             By Category
@@ -181,6 +211,89 @@ function CategoryColumn({
           })
         )}
       </div>
+    </div>
+  );
+}
+
+type BalancePoint = { date: string; balance: number };
+
+function buildBalanceSeries(txs: Transaction[]): BalancePoint[] {
+  if (txs.length === 0) return [];
+  const byDate = new Map<string, number>();
+  for (const tx of txs) {
+    const sign = tx.kind === "income" ? 1 : -1;
+    byDate.set(tx.date, (byDate.get(tx.date) ?? 0) + sign * tx.amount);
+  }
+  const dates = [...byDate.keys()].sort();
+  let running = 0;
+  return dates.map((date) => {
+    running += byDate.get(date) ?? 0;
+    return { date, balance: Math.round(running * 100) / 100 };
+  });
+}
+
+function BalanceChart({ data }: { data: BalancePoint[] }) {
+  return (
+    <div className="h-72 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart
+          data={data}
+          margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+        >
+          <defs>
+            <linearGradient id="balanceFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#B8B3E9" stopOpacity={0.55} />
+              <stop offset="100%" stopColor="#B8B3E9" stopOpacity={0.05} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="#8A8D91" strokeOpacity={0.12} vertical={false} />
+          <XAxis
+            dataKey="date"
+            tick={{ fill: "#8A8D91", fontSize: 12, fontFamily: "var(--font-geist-mono)" }}
+            tickLine={false}
+            axisLine={{ stroke: "#8A8D91", strokeOpacity: 0.2 }}
+            minTickGap={32}
+          />
+          <YAxis
+            tick={{ fill: "#8A8D91", fontSize: 12, fontFamily: "var(--font-geist-mono)" }}
+            tickLine={false}
+            axisLine={{ stroke: "#8A8D91", strokeOpacity: 0.2 }}
+            tickFormatter={(v: number) => formatAmount(v)}
+            width={72}
+          />
+          <Tooltip content={<BalanceTooltip />} />
+          <Area
+            type="monotone"
+            dataKey="balance"
+            stroke="#B8B3E9"
+            strokeWidth={2}
+            fill="url(#balanceFill)"
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+type TooltipPayload = { value?: number | string };
+type BalanceTooltipProps = {
+  active?: boolean;
+  payload?: TooltipPayload[];
+  label?: string;
+};
+
+function BalanceTooltip({ active, payload, label }: BalanceTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const raw = payload[0].value;
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!isFinite(value)) return null;
+  return (
+    <div className="rounded-md border border-mc-gray/15 bg-white px-3 py-2 shadow-sm">
+      <p className="text-xs font-mono text-mc-gray">{label}</p>
+      <p className="mt-0.5 text-sm font-mono font-semibold text-mc-dark">
+        {value >= 0 ? "" : "−"}
+        {formatAmount(Math.abs(value))}
+      </p>
     </div>
   );
 }
