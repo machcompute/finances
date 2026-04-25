@@ -8,6 +8,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -36,39 +37,41 @@ export default function SummaryPage() {
   const baseline = useBaseline();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [maWindow, setMaWindow] = useState<MaWindow>(30);
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const filterActive = startDate !== "" || endDate !== "";
-  const validDateRange = !startDate || !endDate || startDate <= endDate;
+  const [selection, setSelection] = useState<[string, string] | null>(null);
+
+  const filterActive = selection !== null;
   const filteredTxs = useMemo(
-    () =>
-      validDateRange ? filterTransactionsByDate(txs, startDate, endDate) : [],
-    [txs, startDate, endDate, validDateRange],
+    () => applySelection(txs, selection),
+    [txs, selection],
   );
   const summary = useMemo(() => summarize(filteredTxs), [filteredTxs]);
   const balanceSeries = useMemo(
-    () => buildBalanceSeries(filteredTxs, filterActive ? null : baseline),
-    [filteredTxs, filterActive, baseline],
+    () => buildBalanceSeries(txs, baseline),
+    [txs, baseline],
+  );
+  const displayedBalanceSeries = useMemo(
+    () => sliceBalanceSeries(balanceSeries, selection),
+    [balanceSeries, selection],
   );
   const categories = useMemo(() => getCategories(filteredTxs), [filteredTxs]);
   const activeCategory =
     selectedCategory && categories.includes(selectedCategory)
       ? selectedCategory
       : null;
-  const categoryDailyView = useMemo(
+  const dailyView = useMemo(
     () =>
-      activeCategory
+      filteredTxs.length > 0
         ? buildCategoryDailyView(filteredTxs, activeCategory, maWindow)
         : null,
     [filteredTxs, activeCategory, maWindow],
   );
-  const selectedCategoryTransactions = useMemo(
-    () =>
-      activeCategory
-        ? getCategoryTransactions(filteredTxs, activeCategory)
-        : [],
-    [filteredTxs, activeCategory],
-  );
+  const sectionTransactions = useMemo(() => {
+    if (filteredTxs.length === 0) return [];
+    if (activeCategory) return getCategoryTransactions(filteredTxs, activeCategory);
+    return [...filteredTxs].sort((a, b) =>
+      a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
+    );
+  }, [filteredTxs, activeCategory]);
 
   const expenseEntries = Object.entries(summary.byCategory.expense).sort(
     (a, b) => b[1] - a[1],
@@ -85,6 +88,10 @@ export default function SummaryPage() {
   const balanceDot = currentBalance >= 0 ? "bg-mc-mint" : "bg-mc-lavender";
   const empty = txs.length === 0;
   const filteredEmpty = filteredTxs.length === 0;
+
+  function toggleCategory(cat: string) {
+    setSelectedCategory((prev) => (prev === cat ? null : cat));
+  }
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -109,28 +116,39 @@ export default function SummaryPage() {
         </div>
       </section>
 
-      <section className="py-20 lg:py-28 bg-mc-dark/[0.02]">
+      <section className="py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-6">
-          <DateRangeFilter
-            startDate={startDate}
-            endDate={endDate}
-            valid={validDateRange}
-            onStartDateChange={setStartDate}
-            onEndDateChange={setEndDate}
-            onClear={() => {
-              setStartDate("");
-              setEndDate("");
-            }}
-          />
+          <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
+            Balance over time
+          </h2>
+          <p className="mt-3 text-mc-gray text-lg max-w-2xl">
+            Cumulative balance — drag on the chart to focus an interval.
+            Everything below follows the selection.
+          </p>
 
           {empty ? (
             <p className="mt-12 text-mc-gray">No transactions yet.</p>
-          ) : !validDateRange ? null : filteredEmpty ? (
-            <p className="mt-12 text-mc-gray">
-              No transactions match this date range.
-            </p>
           ) : (
-            <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="mt-12 p-6 rounded-2xl border border-mc-gray/15 bg-white">
+              <BalanceChart
+                data={displayedBalanceSeries}
+                hasSelection={filterActive}
+                onSelect={(range) => setSelection(range)}
+                onReset={() => setSelection(null)}
+              />
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="py-20 lg:py-28 bg-mc-dark/[0.02]">
+        <div className="max-w-7xl mx-auto px-6">
+          {empty ? (
+            <p className="text-mc-gray">No transactions yet.</p>
+          ) : filteredEmpty ? (
+            <p className="text-mc-gray">No transactions in this selection.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <SummaryCard
                 label="Income"
                 amount={summary.totalIncome}
@@ -147,31 +165,6 @@ export default function SummaryPage() {
                 dotClass={balanceDot}
                 signed
               />
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="py-20 lg:py-28">
-        <div className="max-w-7xl mx-auto px-6">
-          <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
-            Balance over time
-          </h2>
-          <p className="mt-3 text-mc-gray text-lg max-w-2xl">
-            {filterActive
-              ? "Cumulative balance for the selected date range."
-              : "Cumulative balance as transactions accumulate."}
-          </p>
-
-          {balanceSeries.length === 0 ? (
-            <p className="mt-12 text-mc-gray">
-              {empty
-                ? "No transactions yet."
-                : "No transactions match this date range."}
-            </p>
-          ) : (
-            <div className="mt-12 p-6 rounded-2xl border border-mc-gray/15 bg-white">
-              <BalanceChart data={balanceSeries} />
             </div>
           )}
         </div>
@@ -200,7 +193,7 @@ export default function SummaryPage() {
                 max={maxExpense}
                 barClass="bg-mc-lavender"
                 selectedCategory={activeCategory}
-                onSelect={setSelectedCategory}
+                onSelect={toggleCategory}
               />
               <CategoryColumn
                 title="Income"
@@ -208,7 +201,7 @@ export default function SummaryPage() {
                 max={maxIncome}
                 barClass="bg-mc-mint"
                 selectedCategory={activeCategory}
-                onSelect={setSelectedCategory}
+                onSelect={toggleCategory}
               />
             </div>
           )}
@@ -218,23 +211,37 @@ export default function SummaryPage() {
       <section className="py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-6">
           <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
-            Category daily flow
+            Daily flow
           </h2>
           <p className="mt-3 text-mc-gray text-lg max-w-2xl">
             Daily net flow with {maWindow}-day exponential moving average
             and linear trend.
+            {activeCategory
+              ? ` Filtered to ${activeCategory}.`
+              : " Click a category above to filter."}
           </p>
 
-          {activeCategory && categoryDailyView && categoryDailyView.points.length > 0 ? (
+          {dailyView && dailyView.points.length > 0 ? (
             <div className="mt-12 p-6 rounded-2xl border border-mc-gray/15 bg-white">
               <div className="flex flex-wrap items-baseline justify-between gap-4 mb-6">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
-                    Selected category
+                    {activeCategory ? "Filtered by category" : "Scope"}
                   </p>
-                  <p className="mt-1 text-2xl font-bold text-mc-dark">
-                    {activeCategory}
-                  </p>
+                  <div className="mt-1 flex items-center gap-3 flex-wrap">
+                    <p className="text-2xl font-bold text-mc-dark">
+                      {activeCategory ?? "All categories"}
+                    </p>
+                    {activeCategory && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCategory(null)}
+                        className="text-xs font-medium px-3 py-1 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
+                      >
+                        Clear category
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <WindowSelector value={maWindow} onChange={setMaWindow} />
               </div>
@@ -242,111 +249,36 @@ export default function SummaryPage() {
                 <StatChip
                   label={`Avg/day (${maWindow}d EMA)`}
                   value={formatSignedAmount(
-                    categoryDailyView.points[
-                      categoryDailyView.points.length - 1
-                    ].ma,
+                    dailyView.points[dailyView.points.length - 1].ma,
                   )}
                 />
                 <StatChip
                   label="Net (period)"
-                  value={formatSignedAmount(categoryDailyView.net)}
+                  value={formatSignedAmount(dailyView.net)}
                 />
                 <StatChip
                   label="Trend"
-                  value={`${categoryDailyView.slopePerDay >= 0 ? "+" : "−"}${formatAmount(Math.abs(categoryDailyView.slopePerDay))}/day`}
+                  value={`${dailyView.slopePerDay >= 0 ? "+" : "−"}${formatAmount(Math.abs(dailyView.slopePerDay))}/day`}
                 />
               </div>
-              <CategoryDailyChart data={categoryDailyView.points} />
-              <CategoryTransactionsList
-                key={activeCategory}
-                category={activeCategory}
-                transactions={selectedCategoryTransactions}
+              <CategoryDailyChart data={dailyView.points} />
+              <TransactionsList
+                key={activeCategory ?? "all"}
+                label={activeCategory ?? "All transactions"}
+                transactions={sectionTransactions}
               />
             </div>
-          ) : categories.length > 0 ? (
-            <p className="mt-12 text-mc-gray">
-              Pick a category above to see its daily flow.
-            </p>
+          ) : empty ? (
+            <p className="mt-12 text-mc-gray">No transactions yet.</p>
           ) : (
-            <p className="mt-12 text-mc-gray">No category data yet.</p>
+            <p className="mt-12 text-mc-gray">
+              No transactions in this selection.
+            </p>
           )}
         </div>
       </section>
 
       <Footer />
-    </div>
-  );
-}
-
-function DateRangeFilter({
-  startDate,
-  endDate,
-  valid,
-  onStartDateChange,
-  onEndDateChange,
-  onClear,
-}: {
-  startDate: string;
-  endDate: string;
-  valid: boolean;
-  onStartDateChange: (date: string) => void;
-  onEndDateChange: (date: string) => void;
-  onClear: () => void;
-}) {
-  const active = startDate !== "" || endDate !== "";
-
-  return (
-    <div>
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
-            Date range
-          </h2>
-          <p className="mt-3 text-mc-gray text-lg max-w-2xl">
-            Filter the summary by transaction date.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
-              Start
-            </span>
-            <input
-              type="date"
-              value={startDate}
-              max={endDate || undefined}
-              onChange={(e) => onStartDateChange(e.target.value)}
-              className="mt-2 h-11 rounded-lg border border-mc-gray/20 bg-white px-3 text-sm font-mono text-mc-dark outline-none transition-colors focus:border-mc-lavender"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
-              End
-            </span>
-            <input
-              type="date"
-              value={endDate}
-              min={startDate || undefined}
-              onChange={(e) => onEndDateChange(e.target.value)}
-              className="mt-2 h-11 rounded-lg border border-mc-gray/20 bg-white px-3 text-sm font-mono text-mc-dark outline-none transition-colors focus:border-mc-lavender"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={onClear}
-            disabled={!active}
-            className="h-11 rounded-lg border border-mc-gray/20 px-4 text-sm font-medium text-mc-dark transition-colors hover:bg-mc-dark/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-      {!valid ? (
-        <p className="mt-4 text-sm font-medium text-mc-lavender">
-          Start date must be before end date.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -440,11 +372,11 @@ function CategoryColumn({
   );
 }
 
-function CategoryTransactionsList({
-  category,
+function TransactionsList({
+  label,
   transactions,
 }: {
-  category: string;
+  label: string;
   transactions: Transaction[];
 }) {
   const [page, setPage] = useState(1);
@@ -462,7 +394,7 @@ function CategoryTransactionsList({
           <h3 className="text-lg font-semibold text-mc-dark">Transactions</h3>
           <p className="mt-1 text-sm text-mc-gray">
             {transactions.length} transaction
-            {transactions.length === 1 ? "" : "s"} in {category}.
+            {transactions.length === 1 ? "" : "s"} · {label}.
           </p>
         </div>
         <p className="text-sm font-mono text-mc-gray">
@@ -530,17 +462,26 @@ function CategoryTransactionsList({
 
 type BalancePoint = { date: string; balance: number };
 
-function filterTransactionsByDate(
+function applySelection(
   txs: Transaction[],
-  startDate: string,
-  endDate: string,
+  selection: [string, string] | null,
 ): Transaction[] {
-  if (!startDate && !endDate) return txs;
-  return txs.filter((tx) => {
-    if (startDate && tx.date < startDate) return false;
-    if (endDate && tx.date > endDate) return false;
-    return true;
-  });
+  if (!selection) return txs;
+  const [a, b] = selection;
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  return txs.filter((tx) => tx.date >= lo && tx.date <= hi);
+}
+
+function sliceBalanceSeries(
+  series: BalancePoint[],
+  selection: [string, string] | null,
+): BalancePoint[] {
+  if (!selection) return series;
+  const [a, b] = selection;
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  return series.filter((p) => p.date >= lo && p.date <= hi);
 }
 
 function getCategories(txs: Transaction[]): string[] {
@@ -616,12 +557,14 @@ type CategoryDailyView = {
 
 function buildDailyFlow(
   txs: Transaction[],
-  category: string,
+  category: string | null,
 ): { date: string; flow: number }[] {
   const byDate = new Map<string, number>();
   for (const tx of txs) {
-    const txCategory = tx.category || UNCATEGORIZED_LABEL;
-    if (txCategory !== category) continue;
+    if (category !== null) {
+      const txCategory = tx.category || UNCATEGORIZED_LABEL;
+      if (txCategory !== category) continue;
+    }
     const sign = tx.kind === "income" ? 1 : -1;
     byDate.set(tx.date, (byDate.get(tx.date) ?? 0) + sign * tx.amount);
   }
@@ -679,7 +622,7 @@ function linearTrend(
 
 function buildCategoryDailyView(
   txs: Transaction[],
-  category: string,
+  category: string | null,
   window: number,
 ): CategoryDailyView | null {
   const daily = buildDailyFlow(txs, category);
@@ -723,45 +666,129 @@ function formatSignedAmount(amount: number): string {
   return `${amount >= 0 ? "+" : "−"}${formatAmount(Math.abs(amount))}`;
 }
 
-function BalanceChart({ data }: { data: BalancePoint[] }) {
+function BalanceChart({
+  data,
+  hasSelection,
+  onSelect,
+  onReset,
+}: {
+  data: BalancePoint[];
+  hasSelection: boolean;
+  onSelect: (range: [string, string]) => void;
+  onReset: () => void;
+}) {
+  const [refStart, setRefStart] = useState<string | null>(null);
+  const [refEnd, setRefEnd] = useState<string | null>(null);
+
+  function activeLabel(state: unknown): string | null {
+    if (state && typeof state === "object" && "activeLabel" in state) {
+      const v = (state as { activeLabel?: unknown }).activeLabel;
+      if (typeof v === "string" && v) return v;
+    }
+    return null;
+  }
+
+  function handleMouseDown(state: unknown) {
+    const label = activeLabel(state);
+    if (!label) return;
+    setRefStart(label);
+    setRefEnd(label);
+  }
+  function handleMouseMove(state: unknown) {
+    if (!refStart) return;
+    const label = activeLabel(state);
+    if (!label) return;
+    setRefEnd(label);
+  }
+  function handleMouseUp() {
+    if (refStart && refEnd && refStart !== refEnd) {
+      onSelect([refStart, refEnd]);
+    }
+    setRefStart(null);
+    setRefEnd(null);
+  }
+
+  const dragLo =
+    refStart && refEnd ? (refStart < refEnd ? refStart : refEnd) : null;
+  const dragHi =
+    refStart && refEnd ? (refStart < refEnd ? refEnd : refStart) : null;
+
   return (
-    <div className="h-72 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart
-          data={data}
-          margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
-        >
-          <defs>
-            <linearGradient id="balanceFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#B8B3E9" stopOpacity={0.55} />
-              <stop offset="100%" stopColor="#B8B3E9" stopOpacity={0.05} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid stroke="#8A8D91" strokeOpacity={0.12} vertical={false} />
-          <XAxis
-            dataKey="date"
-            tick={{ fill: "#8A8D91", fontSize: 12, fontFamily: "var(--font-geist-mono)" }}
-            tickLine={false}
-            axisLine={{ stroke: "#8A8D91", strokeOpacity: 0.2 }}
-            minTickGap={32}
-          />
-          <YAxis
-            tick={{ fill: "#8A8D91", fontSize: 12, fontFamily: "var(--font-geist-mono)" }}
-            tickLine={false}
-            axisLine={{ stroke: "#8A8D91", strokeOpacity: 0.2 }}
-            tickFormatter={(v: number) => formatAmount(v)}
-            width={72}
-          />
-          <Tooltip content={<BalanceTooltip />} />
-          <Area
-            type="monotone"
-            dataKey="balance"
-            stroke="#B8B3E9"
-            strokeWidth={2}
-            fill="url(#balanceFill)"
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="w-full">
+      <div className="h-72 w-full select-none">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart
+            data={data}
+            margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
+            <defs>
+              <linearGradient id="balanceFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#B8B3E9" stopOpacity={0.55} />
+                <stop offset="100%" stopColor="#B8B3E9" stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid
+              stroke="#8A8D91"
+              strokeOpacity={0.12}
+              vertical={false}
+            />
+            <XAxis
+              dataKey="date"
+              tick={{
+                fill: "#8A8D91",
+                fontSize: 12,
+                fontFamily: "var(--font-geist-mono)",
+              }}
+              tickLine={false}
+              axisLine={{ stroke: "#8A8D91", strokeOpacity: 0.2 }}
+              minTickGap={32}
+            />
+            <YAxis
+              tick={{
+                fill: "#8A8D91",
+                fontSize: 12,
+                fontFamily: "var(--font-geist-mono)",
+              }}
+              tickLine={false}
+              axisLine={{ stroke: "#8A8D91", strokeOpacity: 0.2 }}
+              tickFormatter={(v: number) => formatAmount(v)}
+              width={72}
+            />
+            <Tooltip content={<BalanceTooltip />} />
+            <Area
+              type="monotone"
+              dataKey="balance"
+              stroke="#B8B3E9"
+              strokeWidth={2}
+              fill="url(#balanceFill)"
+            />
+            {dragLo && dragHi && dragLo !== dragHi && (
+              <ReferenceArea
+                x1={dragLo}
+                x2={dragHi}
+                strokeOpacity={0}
+                fill="#B8B3E9"
+                fillOpacity={0.2}
+              />
+            )}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      {hasSelection && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-xs font-medium px-3 py-1 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
+          >
+            Reset selection
+          </button>
+        </div>
+      )}
     </div>
   );
 }
