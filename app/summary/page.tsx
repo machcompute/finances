@@ -6,6 +6,9 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -13,6 +16,11 @@ import {
 } from "recharts";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
+import { Pagination } from "../components/Pagination";
+
+const TX_PAGE_SIZE = 20;
+const MA_WINDOWS = [7, 14, 30, 90] as const;
+type MaWindow = (typeof MA_WINDOWS)[number];
 import {
   Baseline,
   Transaction,
@@ -27,6 +35,7 @@ export default function SummaryPage() {
   const txs = useTransactions();
   const baseline = useBaseline();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [maWindow, setMaWindow] = useState<MaWindow>(30);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const filterActive = startDate !== "" || endDate !== "";
@@ -46,12 +55,12 @@ export default function SummaryPage() {
     selectedCategory && categories.includes(selectedCategory)
       ? selectedCategory
       : null;
-  const categoryBalanceSeries = useMemo(
+  const categoryDailyView = useMemo(
     () =>
       activeCategory
-        ? buildCategoryBalanceSeries(filteredTxs, activeCategory)
-        : [],
-    [filteredTxs, activeCategory],
+        ? buildCategoryDailyView(filteredTxs, activeCategory, maWindow)
+        : null,
+    [filteredTxs, activeCategory, maWindow],
   );
   const selectedCategoryTransactions = useMemo(
     () =>
@@ -209,15 +218,16 @@ export default function SummaryPage() {
       <section className="py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-6">
           <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
-            Category balance over time
+            Category daily flow
           </h2>
           <p className="mt-3 text-mc-gray text-lg max-w-2xl">
-            Select a category above to see its cumulative balance.
+            Daily net flow with {maWindow}-day exponential moving average
+            and linear trend.
           </p>
 
-          {activeCategory && categoryBalanceSeries.length > 0 ? (
+          {activeCategory && categoryDailyView && categoryDailyView.points.length > 0 ? (
             <div className="mt-12 p-6 rounded-2xl border border-mc-gray/15 bg-white">
-              <div className="flex flex-wrap items-baseline justify-between gap-4 mb-8">
+              <div className="flex flex-wrap items-baseline justify-between gap-4 mb-6">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
                     Selected category
@@ -226,23 +236,36 @@ export default function SummaryPage() {
                     {activeCategory}
                   </p>
                 </div>
-                <p className="text-sm font-mono text-mc-gray">
-                  Balance{" "}
-                  {formatSignedAmount(
-                    categoryBalanceSeries[categoryBalanceSeries.length - 1]
-                      .balance,
-                  )}
-                </p>
+                <WindowSelector value={maWindow} onChange={setMaWindow} />
               </div>
-              <CategoryBalanceChart data={categoryBalanceSeries} />
+              <div className="flex flex-wrap gap-2 mb-6">
+                <StatChip
+                  label={`Avg/day (${maWindow}d EMA)`}
+                  value={formatSignedAmount(
+                    categoryDailyView.points[
+                      categoryDailyView.points.length - 1
+                    ].ma,
+                  )}
+                />
+                <StatChip
+                  label="Net (period)"
+                  value={formatSignedAmount(categoryDailyView.net)}
+                />
+                <StatChip
+                  label="Trend"
+                  value={`${categoryDailyView.slopePerDay >= 0 ? "+" : "−"}${formatAmount(Math.abs(categoryDailyView.slopePerDay))}/day`}
+                />
+              </div>
+              <CategoryDailyChart data={categoryDailyView.points} />
               <CategoryTransactionsList
+                key={activeCategory}
                 category={activeCategory}
                 transactions={selectedCategoryTransactions}
               />
             </div>
           ) : categories.length > 0 ? (
             <p className="mt-12 text-mc-gray">
-              Pick a category above to see its cumulative balance.
+              Pick a category above to see its daily flow.
             </p>
           ) : (
             <p className="mt-12 text-mc-gray">No category data yet.</p>
@@ -424,6 +447,14 @@ function CategoryTransactionsList({
   category: string;
   transactions: Transaction[];
 }) {
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(transactions.length / TX_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageItems = transactions.slice(
+    (safePage - 1) * TX_PAGE_SIZE,
+    safePage * TX_PAGE_SIZE,
+  );
+
   return (
     <div className="mt-10 border-t border-mc-gray/10 pt-8">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -445,7 +476,7 @@ function CategoryTransactionsList({
         </p>
       ) : (
         <ul className="mt-6 divide-y divide-mc-gray/10">
-          {transactions.map((tx) => (
+          {pageItems.map((tx) => (
             <li
               key={tx.id}
               className="py-5 first:pt-0 last:pb-0 flex items-start justify-between gap-4"
@@ -486,6 +517,13 @@ function CategoryTransactionsList({
           ))}
         </ul>
       )}
+      <Pagination
+        page={safePage}
+        pageCount={pageCount}
+        total={transactions.length}
+        pageSize={TX_PAGE_SIZE}
+        onPageChange={setPage}
+      />
     </div>
   );
 }
@@ -563,10 +601,23 @@ function buildBalanceSeries(
   return points;
 }
 
-function buildCategoryBalanceSeries(
+type DailyFlowPoint = {
+  date: string;
+  flow: number;
+  ma: number;
+  trend: number;
+};
+
+type CategoryDailyView = {
+  points: DailyFlowPoint[];
+  net: number;
+  slopePerDay: number;
+};
+
+function buildDailyFlow(
   txs: Transaction[],
   category: string,
-): BalancePoint[] {
+): { date: string; flow: number }[] {
   const byDate = new Map<string, number>();
   for (const tx of txs) {
     const txCategory = tx.category || UNCATEGORIZED_LABEL;
@@ -574,14 +625,98 @@ function buildCategoryBalanceSeries(
     const sign = tx.kind === "income" ? 1 : -1;
     byDate.set(tx.date, (byDate.get(tx.date) ?? 0) + sign * tx.amount);
   }
+  if (byDate.size === 0) return [];
 
-  let running = 0;
-  const points: BalancePoint[] = [];
-  for (const date of [...byDate.keys()].sort()) {
-    running += byDate.get(date) ?? 0;
-    points.push({ date, balance: Math.round(running * 100) / 100 });
+  const dates = [...byDate.keys()].sort();
+  const start = parseISO(dates[0]);
+  const end = parseISO(dates[dates.length - 1]);
+  const out: { date: string; flow: number }[] = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    const iso = formatISO(d);
+    out.push({ date: iso, flow: byDate.get(iso) ?? 0 });
   }
-  return points;
+  return out;
+}
+
+function applyEMA(
+  daily: { date: string; flow: number }[],
+  window: number,
+): number[] {
+  const w = Math.max(1, window);
+  const alpha = 2 / (w + 1);
+  const out = new Array<number>(daily.length);
+  let prev = 0;
+  for (let i = 0; i < daily.length; i++) {
+    prev = alpha * daily[i].flow + (1 - alpha) * prev;
+    out[i] = prev;
+  }
+  return out;
+}
+
+function linearTrend(
+  daily: { date: string; flow: number }[],
+): { line: number[]; slope: number } {
+  const n = daily.length;
+  if (n === 0) return { line: [], slope: 0 };
+  if (n === 1) return { line: [daily[0].flow], slope: 0 };
+  let sx = 0;
+  let sy = 0;
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sx += i;
+    sy += daily[i].flow;
+    sxy += i * daily[i].flow;
+    sxx += i * i;
+  }
+  const denom = n * sxx - sx * sx;
+  const slope = denom === 0 ? 0 : (n * sxy - sx * sy) / denom;
+  const intercept = (sy - slope * sx) / n;
+  const line = new Array<number>(n);
+  for (let i = 0; i < n; i++) line[i] = slope * i + intercept;
+  return { line, slope };
+}
+
+function buildCategoryDailyView(
+  txs: Transaction[],
+  category: string,
+  window: number,
+): CategoryDailyView | null {
+  const daily = buildDailyFlow(txs, category);
+  if (daily.length === 0) return null;
+
+  const ma = applyEMA(daily, window);
+  const { line: trend, slope } = linearTrend(daily);
+  let net = 0;
+  const points: DailyFlowPoint[] = daily.map((d, i) => {
+    net += d.flow;
+    return {
+      date: d.date,
+      flow: roundTo2(d.flow),
+      ma: roundTo2(ma[i]),
+      trend: roundTo2(trend[i]),
+    };
+  });
+  return { points, net: roundTo2(net), slopePerDay: roundTo2(slope) };
+}
+
+function roundTo2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+function parseISO(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function addDays(d: Date, n: number): Date {
+  const out = new Date(d);
+  out.setUTCDate(out.getUTCDate() + n);
+  return out;
+}
+
+function formatISO(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
 function formatSignedAmount(amount: number): string {
@@ -631,17 +766,17 @@ function BalanceChart({ data }: { data: BalancePoint[] }) {
   );
 }
 
-function CategoryBalanceChart({ data }: { data: BalancePoint[] }) {
+function CategoryDailyChart({ data }: { data: DailyFlowPoint[] }) {
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart
+        <ComposedChart
           data={data}
           margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
         >
           <defs>
             <linearGradient
-              id="categoryBalanceFill"
+              id="categoryMaFill"
               x1="0"
               y1="0"
               x2="0"
@@ -678,17 +813,65 @@ function CategoryBalanceChart({ data }: { data: BalancePoint[] }) {
             tickFormatter={(v: number) => formatAmount(v)}
             width={72}
           />
-          <Tooltip content={<BalanceTooltip />} />
+          <ReferenceLine y={0} stroke="#8A8D91" strokeOpacity={0.3} />
+          <Tooltip content={<DailyFlowTooltip />} />
           <Area
             type="monotone"
-            dataKey="balance"
+            dataKey="ma"
             stroke="#98DFAF"
             strokeWidth={2}
-            fill="url(#categoryBalanceFill)"
+            fill="url(#categoryMaFill)"
           />
-        </AreaChart>
+          <Line
+            type="linear"
+            dataKey="trend"
+            stroke="#B8B3E9"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            dot={false}
+            activeDot={false}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
+  );
+}
+
+function WindowSelector({
+  value,
+  onChange,
+}: {
+  value: MaWindow;
+  onChange: (next: MaWindow) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-full border border-mc-gray/15 p-0.5">
+      {MA_WINDOWS.map((w) => (
+        <button
+          key={w}
+          type="button"
+          onClick={() => onChange(w)}
+          className={`text-sm font-medium px-3 py-1 rounded-full transition-colors ${
+            value === w
+              ? "bg-mc-dark text-white"
+              : "text-mc-gray hover:text-mc-dark"
+          }`}
+        >
+          {w}d
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StatChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-2 px-3 py-1.5 rounded-full bg-mc-dark/[0.04] border border-mc-gray/15">
+      <span className="text-xs uppercase tracking-wider text-mc-gray">
+        {label}
+      </span>
+      <span className="text-sm font-mono text-mc-dark">{value}</span>
+    </span>
   );
 }
 
@@ -711,6 +894,58 @@ function BalanceTooltip({ active, payload, label }: BalanceTooltipProps) {
         {value >= 0 ? "" : "−"}
         {formatAmount(Math.abs(value))}
       </p>
+    </div>
+  );
+}
+
+type DailyTooltipPayload = { dataKey?: string; value?: number | string };
+type DailyTooltipProps = {
+  active?: boolean;
+  payload?: DailyTooltipPayload[];
+  label?: string;
+};
+
+function DailyFlowTooltip({ active, payload, label }: DailyTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const byKey = new Map<string, number>();
+  for (const p of payload) {
+    if (!p.dataKey) continue;
+    const v = typeof p.value === "number" ? p.value : Number(p.value);
+    if (isFinite(v)) byKey.set(p.dataKey, v);
+  }
+  const flow = byKey.get("flow");
+  const ma = byKey.get("ma");
+  const trend = byKey.get("trend");
+  return (
+    <div className="rounded-md border border-mc-gray/15 bg-white px-3 py-2 shadow-sm space-y-0.5">
+      <p className="text-xs font-mono text-mc-gray">{label}</p>
+      {flow !== undefined && (
+        <p className="text-xs font-mono text-mc-gray">
+          Flow{" "}
+          <span className="text-mc-dark font-semibold">
+            {flow >= 0 ? "+" : "−"}
+            {formatAmount(Math.abs(flow))}
+          </span>
+        </p>
+      )}
+      {ma !== undefined && (
+        <p className="text-xs font-mono text-mc-gray">
+          EMA{" "}
+          <span className="text-mc-dark font-semibold">
+            {ma >= 0 ? "+" : "−"}
+            {formatAmount(Math.abs(ma))}
+          </span>
+        </p>
+      )}
+      {trend !== undefined && (
+        <p className="text-xs font-mono text-mc-gray">
+          Trend{" "}
+          <span className="text-mc-dark font-semibold">
+            {trend >= 0 ? "+" : "−"}
+            {formatAmount(Math.abs(trend))}
+          </span>
+        </p>
+      )}
     </div>
   );
 }
