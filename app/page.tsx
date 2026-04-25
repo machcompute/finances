@@ -372,7 +372,7 @@ export default function TransactionsPage() {
             {sorted.length === 0 ? (
               <p className="text-mc-gray">
                 No transactions yet. Add one above, or upload an existing
-                JSON file.
+                OFX file.
               </p>
             ) : (
               <ul className="divide-y divide-mc-gray/10">
