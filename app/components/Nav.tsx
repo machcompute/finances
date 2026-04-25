@@ -4,7 +4,6 @@ import Link from "next/link";
 const NAV_LINKS = [
   { label: "Transactions", href: "/" },
   { label: "Summary", href: "/summary" },
-  { label: "Categories", href: "/categories" },
   { label: "Edit", href: "/edit" },
   { label: "Import", href: "/import" },
 ];

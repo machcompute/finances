@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
+import { CategoryInput } from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
 import { ParsedCSV, parseCSV } from "../lib/csv";
 
@@ -1055,24 +1056,14 @@ function PreviewTable({
                 </td>
                 <td className="py-2 pr-4">
                   {editable && r.kind && onCategoryChange && categoriesByKind ? (
-                    <select
+                    <CategoryInput
                       value={r.category ?? ""}
-                      onChange={(e) => onCategoryChange(r.index, e.target.value)}
+                      onChange={(v) => onCategoryChange(r.index, v)}
+                      options={categoriesByKind[r.kind]}
+                      listId={`import-cats-${r.kind}`}
+                      placeholder={UNCATEGORIZED_LABEL}
                       className="rounded-md border border-mc-gray/15 bg-white px-2 py-1 text-sm text-mc-dark focus:outline-none focus:border-mc-lavender/60 transition-colors"
-                    >
-                      <option value="">{UNCATEGORIZED_LABEL}</option>
-                      {r.category &&
-                        !categoriesByKind[r.kind].includes(r.category) && (
-                          <option value={r.category}>
-                            {r.category} (new)
-                          </option>
-                        )}
-                      {categoriesByKind[r.kind].map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   ) : r.category ? (
                     <span className="text-mc-dark/80">{r.category}</span>
                   ) : (

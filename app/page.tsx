@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Nav } from "./components/Nav";
 import { Footer } from "./components/Footer";
+import { CategoryInput } from "./components/CategoryInput";
 import { Pagination } from "./components/Pagination";
 
 const PAGE_SIZE = 20;
@@ -33,10 +34,7 @@ export default function TransactionsPage() {
   const [note, setNote] = useState("");
 
   const availableCategories = categories[kind];
-  const effectiveCategory =
-    category && availableCategories.includes(category)
-      ? category
-      : (availableCategories[0] ?? "");
+  const effectiveCategory = category.trim();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -137,22 +135,22 @@ export default function TransactionsPage() {
 
   function selectKind(next: TransactionKind) {
     setKind(next);
-    setCategory(categories[next][0] ?? "");
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const parsed = parseFloat(amount);
-    if (!isFinite(parsed) || parsed <= 0 || !effectiveCategory) return;
+    if (!isFinite(parsed) || parsed <= 0) return;
     addTransaction({
       kind,
       amount: parsed,
-      category: effectiveCategory,
+      category: effectiveCategory || undefined,
       date,
       note: note.trim() || undefined,
     });
     setAmount("");
     setNote("");
+    setCategory("");
   }
 
   const inputClass =
@@ -243,24 +241,21 @@ export default function TransactionsPage() {
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
-                    Category
+                    Category{" "}
+                    <span className="text-mc-gray/50 normal-case font-normal">
+                      (optional)
+                    </span>
                   </span>
-                  <select
-                    value={effectiveCategory}
-                    onChange={(e) => setCategory(e.target.value)}
-                    disabled={availableCategories.length === 0}
-                    className={`mt-2 ${inputClass}`}
-                  >
-                    {availableCategories.length === 0 ? (
-                      <option value="">No categories — add one first</option>
-                    ) : (
-                      availableCategories.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))
-                    )}
-                  </select>
+                  <div className="mt-2">
+                    <CategoryInput
+                      value={category}
+                      onChange={setCategory}
+                      options={availableCategories}
+                      listId={`new-tx-cats-${kind}`}
+                      placeholder="Type or pick…"
+                      className={inputClass}
+                    />
+                  </div>
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
@@ -298,8 +293,7 @@ export default function TransactionsPage() {
               <button
                 type="submit"
                 form="add-transaction-form"
-                disabled={!effectiveCategory}
-                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors"
               >
                 Add transaction
               </button>

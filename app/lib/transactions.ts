@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { exportToOFX, fitidFromId, parseOFX } from "./ofx";
 import { suggestCategory } from "./csv";
 
@@ -18,34 +18,15 @@ export const UNCATEGORIZED_LABEL = "Uncategorized";
 
 export type CategoryMap = Record<TransactionKind, string[]>;
 
-export const DEFAULT_CATEGORIES: CategoryMap = {
-  income: ["Salary", "Freelance", "Gift", "Other"],
-  expense: [
-    "Food",
-    "Transport",
-    "Housing",
-    "Entertainment",
-    "Health",
-    "Shopping",
-    "Other",
-  ],
-};
-
 export type Baseline = { amount: number; date: string };
 
 const SERVER_TX_SNAPSHOT: Transaction[] = [];
-const SERVER_CAT_SNAPSHOT: CategoryMap = DEFAULT_CATEGORIES;
 const SERVER_BASELINE_SNAPSHOT: Baseline | null = null;
 
 let txStore: Transaction[] = [];
-let catStore: CategoryMap = {
-  income: [...DEFAULT_CATEGORIES.income],
-  expense: [...DEFAULT_CATEGORIES.expense],
-};
 let baselineStore: Baseline | null = null;
 
 const txListeners = new Set<() => void>();
-const catListeners = new Set<() => void>();
 const baselineListeners = new Set<() => void>();
 
 function subscribeTx(listener: () => void): () => void {
@@ -55,21 +36,23 @@ function subscribeTx(listener: () => void): () => void {
   };
 }
 
-function subscribeCat(listener: () => void): () => void {
-  catListeners.add(listener);
-  return () => {
-    catListeners.delete(listener);
-  };
-}
-
 function commitTx(next: Transaction[]): void {
   txStore = next;
   txListeners.forEach((l) => l());
 }
 
-function commitCat(next: CategoryMap): void {
-  catStore = next;
-  catListeners.forEach((l) => l());
+function deriveCategories(txs: Transaction[]): CategoryMap {
+  const income = new Set<string>();
+  const expense = new Set<string>();
+  for (const tx of txs) {
+    if (!tx.category) continue;
+    (tx.kind === "income" ? income : expense).add(tx.category);
+  }
+  const cmp = (a: string, b: string) => a.localeCompare(b);
+  return {
+    income: [...income].sort(cmp),
+    expense: [...expense].sort(cmp),
+  };
 }
 
 function subscribeBaseline(listener: () => void): () => void {
@@ -110,11 +93,8 @@ export function useTransactions(): Transaction[] {
 }
 
 export function useCategories(): CategoryMap {
-  return useSyncExternalStore(
-    subscribeCat,
-    () => catStore,
-    () => SERVER_CAT_SNAPSHOT,
-  );
+  const txs = useTransactions();
+  return useMemo(() => deriveCategories(txs), [txs]);
 }
 
 export function addTransaction(tx: Omit<Transaction, "id">): void {
@@ -163,13 +143,10 @@ export function addTransactionsBatch(
     return { added: 0, categoriesAdded: 0 };
   }
 
-  const lcIndex: Record<TransactionKind, Set<string>> = {
-    income: new Set(catStore.income.map((c) => c.toLowerCase())),
-    expense: new Set(catStore.expense.map((c) => c.toLowerCase())),
-  };
-  const nextCats: CategoryMap = {
-    income: [...catStore.income],
-    expense: [...catStore.expense],
+  const before = deriveCategories(txStore);
+  const seen: Record<TransactionKind, Set<string>> = {
+    income: new Set(before.income.map((c) => c.toLowerCase())),
+    expense: new Set(before.expense.map((c) => c.toLowerCase())),
   };
   let categoriesAdded = 0;
 
@@ -177,98 +154,17 @@ export function addTransactionsBatch(
   for (const draft of txs) {
     if (draft.category) {
       const lc = draft.category.toLowerCase();
-      if (!lcIndex[draft.kind].has(lc)) {
-        lcIndex[draft.kind].add(lc);
-        nextCats[draft.kind].push(draft.category);
+      if (!seen[draft.kind].has(lc)) {
+        seen[draft.kind].add(lc);
         categoriesAdded++;
       }
     }
     toAdd.push({ ...draft, id: freshId() });
   }
 
-  if (categoriesAdded > 0) commitCat(nextCats);
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
   return { added: toAdd.length, categoriesAdded };
-}
-
-function normalizeCategory(name: string): string {
-  return name.trim();
-}
-
-export function addCategory(kind: TransactionKind, name: string): boolean {
-  const clean = normalizeCategory(name);
-  if (!clean) return false;
-  const existing = catStore[kind];
-  if (existing.some((c) => c.toLowerCase() === clean.toLowerCase())) {
-    return false;
-  }
-  commitCat({ ...catStore, [kind]: [...existing, clean] });
-  return true;
-}
-
-export type RenameResult = "ok" | "no-op" | "empty" | "duplicate";
-
-export function renameCategory(
-  kind: TransactionKind,
-  oldName: string,
-  newName: string,
-): RenameResult {
-  const clean = normalizeCategory(newName);
-  if (!clean) return "empty";
-  if (clean === oldName) return "no-op";
-  const existing = catStore[kind];
-  if (
-    existing.some(
-      (c) => c !== oldName && c.toLowerCase() === clean.toLowerCase(),
-    )
-  ) {
-    return "duplicate";
-  }
-  commitCat({
-    ...catStore,
-    [kind]: existing.map((c) => (c === oldName ? clean : c)),
-  });
-  commitTx(
-    txStore.map((tx) =>
-      tx.kind === kind && tx.category === oldName
-        ? { ...tx, category: clean }
-        : tx,
-    ),
-  );
-  return "ok";
-}
-
-export function removeCategory(
-  kind: TransactionKind,
-  name: string,
-  migrateTo?: string,
-): void {
-  commitCat({
-    ...catStore,
-    [kind]: catStore[kind].filter((c) => c !== name),
-  });
-  if (migrateTo !== undefined) {
-    commitTx(
-      txStore.map((tx) =>
-        tx.kind === kind && tx.category === name
-          ? { ...tx, category: migrateTo }
-          : tx,
-      ),
-    );
-  }
-}
-
-export function countCategoryUsage(
-  txs: Transaction[],
-  kind: TransactionKind,
-  name: string,
-): number {
-  let n = 0;
-  for (const tx of txs) {
-    if (tx.kind === kind && tx.category === name) n++;
-  }
-  return n;
 }
 
 export function downloadOFX(filename = "finances.ofx"): void {
@@ -301,13 +197,10 @@ export function importOFX(text: string): OFXImportResult {
   if (!parsed.ok) return parsed;
 
   const existingIds = new Set(txStore.map((t) => fitidFromId(t.id)));
-  const lcIndex: Record<TransactionKind, Set<string>> = {
-    income: new Set(catStore.income.map((c) => c.toLowerCase())),
-    expense: new Set(catStore.expense.map((c) => c.toLowerCase())),
-  };
-  const nextCats: CategoryMap = {
-    income: [...catStore.income],
-    expense: [...catStore.expense],
+  const before = deriveCategories(txStore);
+  const seen: Record<TransactionKind, Set<string>> = {
+    income: new Set(before.income.map((c) => c.toLowerCase())),
+    expense: new Set(before.expense.map((c) => c.toLowerCase())),
   };
   let categoriesAdded = 0;
 
@@ -344,9 +237,8 @@ export function importOFX(text: string): OFXImportResult {
 
     if (category) {
       const lc = category.toLowerCase();
-      if (!lcIndex[kind].has(lc)) {
-        lcIndex[kind].add(lc);
-        nextCats[kind].push(category);
+      if (!seen[kind].has(lc)) {
+        seen[kind].add(lc);
         categoriesAdded++;
       }
     }
@@ -360,7 +252,6 @@ export function importOFX(text: string): OFXImportResult {
     });
   }
 
-  if (categoriesAdded > 0) commitCat(nextCats);
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
   let baselineApplied = false;
@@ -418,7 +309,6 @@ export type ResyncResult = {
   scanned: number;
   reclassified: number;
   remaining: number;
-  categoriesAdded: number;
 };
 
 export type ResyncProposal = {
@@ -462,16 +352,6 @@ export function previewResync(threshold?: number): ResyncProposal[] {
 }
 
 export function resyncCategories(threshold?: number): ResyncResult {
-  const lcIndex: Record<TransactionKind, Set<string>> = {
-    income: new Set(catStore.income.map((c) => c.toLowerCase())),
-    expense: new Set(catStore.expense.map((c) => c.toLowerCase())),
-  };
-  const nextCats: CategoryMap = {
-    income: [...catStore.income],
-    expense: [...catStore.expense],
-  };
-  let categoriesAdded = 0;
-
   let scanned = 0;
   let reclassified = 0;
   let remaining = 0;
@@ -499,20 +379,13 @@ export function resyncCategories(threshold?: number): ResyncResult {
       remaining++;
       continue;
     }
-    const lc = s.category.toLowerCase();
-    if (!lcIndex[tx.kind].has(lc)) {
-      lcIndex[tx.kind].add(lc);
-      nextCats[tx.kind].push(s.category);
-      categoriesAdded++;
-    }
     next.push({ ...tx, category: s.category });
     reclassified++;
   }
 
-  if (categoriesAdded > 0) commitCat(nextCats);
   if (reclassified > 0) commitTx(next);
 
-  return { scanned, reclassified, remaining, categoriesAdded };
+  return { scanned, reclassified, remaining };
 }
 
 export function formatAmount(amount: number): string {

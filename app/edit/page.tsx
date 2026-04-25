@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
+import { CategoryInput } from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
 import { DEFAULT_SIMILARITY_THRESHOLD } from "../lib/csv";
 import {
@@ -27,6 +28,7 @@ export default function EditPage() {
   const [resyncMessage, setResyncMessage] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [threshold, setThreshold] = useState(DEFAULT_SIMILARITY_THRESHOLD);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const uncategorizedCount = useMemo(
     () => txs.reduce((n, t) => (t.category ? n : n + 1), 0),
@@ -37,9 +39,11 @@ export default function EditPage() {
     const sorted = [...txs].sort((a, b) =>
       a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
     );
-    if (filter === "uncategorized") return sorted.filter((t) => !t.category);
+    if (filter === "uncategorized") {
+      return sorted.filter((t) => !t.category || t.id === editingId);
+    }
     return sorted;
-  }, [txs, filter]);
+  }, [txs, filter, editingId]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -58,16 +62,9 @@ export default function EditPage() {
 
   function handleResync() {
     const r = resyncCategories(threshold);
-    const parts = [
-      `Re-synced ${r.reclassified} of ${r.scanned}`,
-      `${r.remaining} still uncategorized`,
-    ];
-    if (r.categoriesAdded > 0) {
-      parts.push(
-        `${r.categoriesAdded} new categor${r.categoriesAdded === 1 ? "y" : "ies"}`,
-      );
-    }
-    setResyncMessage(parts.join(" · "));
+    setResyncMessage(
+      `Re-synced ${r.reclassified} of ${r.scanned} · ${r.remaining} still uncategorized`,
+    );
   }
 
   return (
@@ -173,8 +170,6 @@ export default function EditPage() {
                   <tbody className="divide-y divide-mc-gray/10">
                     {pageItems.map((tx) => {
                       const options = categories[tx.kind];
-                      const orphan =
-                        tx.category && !options.includes(tx.category);
                       return (
                         <tr key={tx.id}>
                           <td className="py-3 px-4 font-mono text-mc-gray">
@@ -203,32 +198,29 @@ export default function EditPage() {
                             {formatAmount(tx.amount)}
                           </td>
                           <td className="py-3 px-4">
-                            <select
+                            <CategoryInput
                               value={tx.category ?? ""}
-                              onChange={(e) =>
+                              onChange={(v) =>
                                 setTransactionCategory(
                                   tx.id,
-                                  e.target.value || undefined,
+                                  v || undefined,
                                 )
                               }
+                              onFocus={() => setEditingId(tx.id)}
+                              onBlur={() =>
+                                setEditingId((cur) =>
+                                  cur === tx.id ? null : cur,
+                                )
+                              }
+                              options={options}
+                              listId={`edit-cats-${tx.kind}`}
+                              placeholder={UNCATEGORIZED_LABEL}
                               className={`rounded-md border bg-white px-2 py-1 text-sm focus:outline-none focus:border-mc-lavender/60 transition-colors ${
                                 tx.category
                                   ? "border-mc-gray/15 text-mc-dark"
                                   : "border-mc-lavender/40 text-mc-gray italic"
                               }`}
-                            >
-                              <option value="">{UNCATEGORIZED_LABEL}</option>
-                              {orphan && (
-                                <option value={tx.category}>
-                                  {tx.category} (orphan)
-                                </option>
-                              )}
-                              {options.map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
-                              ))}
-                            </select>
+                            />
                           </td>
                           <td className="py-3 px-4 text-mc-gray font-mono text-xs">
                             {tx.account ?? "—"}
@@ -250,14 +242,9 @@ export default function EditPage() {
           </div>
 
           <p className="mt-6 text-xs text-mc-gray">
-            Need a new category? Add it on the{" "}
-            <Link
-              href="/categories"
-              className="underline decoration-mc-gray/40 hover:text-mc-dark"
-            >
-              Categories page
-            </Link>{" "}
-            and it will appear in the dropdowns.
+            Type a new category name to create it on the fly. Existing
+            categories from other transactions of the same kind appear as
+            suggestions.
           </p>
         </div>
       </section>
