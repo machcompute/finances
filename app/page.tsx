@@ -5,13 +5,13 @@ import { useMemo, useRef, useState } from "react";
 import { Nav } from "./components/Nav";
 import { Footer } from "./components/Footer";
 import {
-  CATEGORIES,
   TransactionKind,
   addTransaction,
   downloadJSON,
   formatAmount,
   importFromJSON,
   removeTransaction,
+  useCategories,
   useTransactions,
 } from "./lib/transactions";
 
@@ -21,14 +21,23 @@ function todayISO(): string {
 
 export default function TransactionsPage() {
   const txs = useTransactions();
+  const categories = useCategories();
 
   const [kind, setKind] = useState<TransactionKind>("expense");
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState(CATEGORIES.expense[0]);
+  const [category, setCategory] = useState("");
   const [date, setDate] = useState(todayISO);
   const [note, setNote] = useState("");
 
+  const availableCategories = categories[kind];
+  const effectiveCategory =
+    category && availableCategories.includes(category)
+      ? category
+      : (availableCategories[0] ?? "");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [isDragging, setIsDragging] = useState(false);
   const [importMessage, setImportMessage] = useState<{
     kind: "ok" | "error";
     text: string;
@@ -38,17 +47,16 @@ export default function TransactionsPage() {
     fileInputRef.current?.click();
   }
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  async function runImport(file: File) {
     try {
       const text = await file.text();
       const result = importFromJSON(text);
       if (result.ok) {
+        const tx = result.transactionCount;
+        const cat = result.categoryCount;
         setImportMessage({
           kind: "ok",
-          text: `Loaded ${result.count} transaction${result.count === 1 ? "" : "s"}.`,
+          text: `Loaded ${tx} transaction${tx === 1 ? "" : "s"} and ${cat} categor${cat === 1 ? "y" : "ies"}.`,
         });
       } else {
         setImportMessage({ kind: "error", text: result.error });
@@ -56,6 +64,46 @@ export default function TransactionsPage() {
     } catch {
       setImportMessage({ kind: "error", text: "Could not read file." });
     }
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    await runImport(file);
+  }
+
+  function hasFiles(e: React.DragEvent): boolean {
+    return Array.from(e.dataTransfer.types).includes("Files");
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setIsDragging(true);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragging(false);
+  }
+
+  async function handleDrop(e: React.DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await runImport(file);
   }
 
   const sorted = useMemo(
@@ -68,17 +116,17 @@ export default function TransactionsPage() {
 
   function selectKind(next: TransactionKind) {
     setKind(next);
-    setCategory(CATEGORIES[next][0]);
+    setCategory(categories[next][0] ?? "");
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const parsed = parseFloat(amount);
-    if (!isFinite(parsed) || parsed <= 0) return;
+    if (!isFinite(parsed) || parsed <= 0 || !effectiveCategory) return;
     addTransaction({
       kind,
       amount: parsed,
-      category,
+      category: effectiveCategory,
       date,
       note: note.trim() || undefined,
     });
@@ -90,7 +138,23 @@ export default function TransactionsPage() {
     "w-full rounded-md border border-mc-gray/15 bg-white px-3 py-2 text-sm text-mc-dark placeholder:text-mc-gray/60 focus:outline-none focus:border-mc-lavender/60 transition-colors";
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
+    <div
+      className="min-h-screen bg-white flex flex-col relative"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragging && (
+        <div className="fixed inset-0 z-[60] pointer-events-none flex items-center justify-center p-6">
+          <div className="absolute inset-4 rounded-2xl border-2 border-dashed border-mc-lavender bg-mc-lavender/15 backdrop-blur-sm" />
+          <div className="relative px-6 py-4 rounded-full bg-white border border-mc-gray/15 shadow-lg">
+            <span className="text-sm font-medium text-mc-dark">
+              Drop JSON to import
+            </span>
+          </div>
+        </div>
+      )}
       <Nav />
 
       <section className="max-w-7xl w-full mx-auto px-6 pt-20 pb-16 lg:pt-32 lg:pb-28">
@@ -102,14 +166,6 @@ export default function TransactionsPage() {
             <p className="mt-6 text-lg text-mc-gray leading-relaxed max-w-lg">
               Log income and expenses. Download your data as JSON to keep it.
             </p>
-            <div className="mt-8">
-              <Link
-                href="/summary"
-                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors"
-              >
-                View Summary &rarr;
-              </Link>
-            </div>
           </div>
           <div className="flex-1 w-full max-w-xl lg:max-w-none">
             <div className="p-6 rounded-2xl border border-mc-gray/15 bg-white">
@@ -117,7 +173,11 @@ export default function TransactionsPage() {
                 Add transaction
               </h2>
 
-            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+            <form
+              id="add-transaction-form"
+              onSubmit={handleSubmit}
+              className="mt-6 space-y-5"
+            >
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -165,15 +225,20 @@ export default function TransactionsPage() {
                     Category
                   </span>
                   <select
-                    value={category}
+                    value={effectiveCategory}
                     onChange={(e) => setCategory(e.target.value)}
+                    disabled={availableCategories.length === 0}
                     className={`mt-2 ${inputClass}`}
                   >
-                    {CATEGORIES[kind].map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
+                    {availableCategories.length === 0 ? (
+                      <option value="">No categories — add one first</option>
+                    ) : (
+                      availableCategories.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </label>
                 <label className="block">
@@ -205,15 +270,24 @@ export default function TransactionsPage() {
                 </label>
               </div>
 
-              <div>
-                <button
-                  type="submit"
-                  className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors"
-                >
-                  Add transaction
-                </button>
-              </div>
             </form>
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="submit"
+                form="add-transaction-form"
+                disabled={!effectiveCategory}
+                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Add transaction
+              </button>
+              <Link
+                href="/summary"
+                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 font-medium text-sm hover:bg-mc-lavender/25 transition-colors"
+              >
+                View Summary &rarr;
+              </Link>
             </div>
           </div>
         </div>
@@ -242,6 +316,7 @@ export default function TransactionsPage() {
               <button
                 type="button"
                 onClick={handleImportClick}
+                title="Or drop a file anywhere on the page"
                 className="text-sm font-medium px-4 py-2 rounded-full bg-mc-mint/20 text-mc-dark/80 border border-mc-mint/30 hover:bg-mc-mint/30 transition-colors"
               >
                 Upload JSON

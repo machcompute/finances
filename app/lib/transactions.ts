@@ -11,7 +11,9 @@ export type Transaction = {
   note?: string;
 };
 
-export const CATEGORIES: Record<TransactionKind, string[]> = {
+export type CategoryMap = Record<TransactionKind, string[]>;
+
+export const DEFAULT_CATEGORIES: CategoryMap = {
   income: ["Salary", "Freelance", "Gift", "Other"],
   expense: [
     "Food",
@@ -24,33 +26,56 @@ export const CATEGORIES: Record<TransactionKind, string[]> = {
   ],
 };
 
-const SERVER_SNAPSHOT: Transaction[] = [];
+const SERVER_TX_SNAPSHOT: Transaction[] = [];
+const SERVER_CAT_SNAPSHOT: CategoryMap = DEFAULT_CATEGORIES;
 
-let store: Transaction[] = [];
-const listeners = new Set<() => void>();
+let txStore: Transaction[] = [];
+let catStore: CategoryMap = {
+  income: [...DEFAULT_CATEGORIES.income],
+  expense: [...DEFAULT_CATEGORIES.expense],
+};
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
+const txListeners = new Set<() => void>();
+const catListeners = new Set<() => void>();
+
+function subscribeTx(listener: () => void): () => void {
+  txListeners.add(listener);
   return () => {
-    listeners.delete(listener);
+    txListeners.delete(listener);
   };
 }
 
-function getSnapshot(): Transaction[] {
-  return store;
+function subscribeCat(listener: () => void): () => void {
+  catListeners.add(listener);
+  return () => {
+    catListeners.delete(listener);
+  };
 }
 
-function getServerSnapshot(): Transaction[] {
-  return SERVER_SNAPSHOT;
+function commitTx(next: Transaction[]): void {
+  txStore = next;
+  txListeners.forEach((l) => l());
 }
 
-function commit(next: Transaction[]): void {
-  store = next;
-  listeners.forEach((l) => l());
+function commitCat(next: CategoryMap): void {
+  catStore = next;
+  catListeners.forEach((l) => l());
 }
 
 export function useTransactions(): Transaction[] {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(
+    subscribeTx,
+    () => txStore,
+    () => SERVER_TX_SNAPSHOT,
+  );
+}
+
+export function useCategories(): CategoryMap {
+  return useSyncExternalStore(
+    subscribeCat,
+    () => catStore,
+    () => SERVER_CAT_SNAPSHOT,
+  );
 }
 
 export function addTransaction(tx: Omit<Transaction, "id">): void {
@@ -58,15 +83,90 @@ export function addTransaction(tx: Omit<Transaction, "id">): void {
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  commit([{ ...tx, id }, ...store]);
+  commitTx([{ ...tx, id }, ...txStore]);
 }
 
 export function removeTransaction(id: string): void {
-  commit(store.filter((t) => t.id !== id));
+  commitTx(txStore.filter((t) => t.id !== id));
 }
 
-export function clearTransactions(): void {
-  commit([]);
+function normalizeCategory(name: string): string {
+  return name.trim();
+}
+
+export function addCategory(kind: TransactionKind, name: string): boolean {
+  const clean = normalizeCategory(name);
+  if (!clean) return false;
+  const existing = catStore[kind];
+  if (existing.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+    return false;
+  }
+  commitCat({ ...catStore, [kind]: [...existing, clean] });
+  return true;
+}
+
+export type RenameResult = "ok" | "no-op" | "empty" | "duplicate";
+
+export function renameCategory(
+  kind: TransactionKind,
+  oldName: string,
+  newName: string,
+): RenameResult {
+  const clean = normalizeCategory(newName);
+  if (!clean) return "empty";
+  if (clean === oldName) return "no-op";
+  const existing = catStore[kind];
+  if (
+    existing.some(
+      (c) => c !== oldName && c.toLowerCase() === clean.toLowerCase(),
+    )
+  ) {
+    return "duplicate";
+  }
+  commitCat({
+    ...catStore,
+    [kind]: existing.map((c) => (c === oldName ? clean : c)),
+  });
+  commitTx(
+    txStore.map((tx) =>
+      tx.kind === kind && tx.category === oldName
+        ? { ...tx, category: clean }
+        : tx,
+    ),
+  );
+  return "ok";
+}
+
+export function removeCategory(
+  kind: TransactionKind,
+  name: string,
+  migrateTo?: string,
+): void {
+  commitCat({
+    ...catStore,
+    [kind]: catStore[kind].filter((c) => c !== name),
+  });
+  if (migrateTo !== undefined) {
+    commitTx(
+      txStore.map((tx) =>
+        tx.kind === kind && tx.category === name
+          ? { ...tx, category: migrateTo }
+          : tx,
+      ),
+    );
+  }
+}
+
+export function countCategoryUsage(
+  txs: Transaction[],
+  kind: TransactionKind,
+  name: string,
+): number {
+  let n = 0;
+  for (const tx of txs) {
+    if (tx.kind === kind && tx.category === name) n++;
+  }
+  return n;
 }
 
 function isTransaction(value: unknown): value is Transaction {
@@ -83,11 +183,33 @@ function isTransaction(value: unknown): value is Transaction {
   );
 }
 
-export function exportToJSON(): string {
-  return JSON.stringify(store, null, 2);
+function isCategoryMap(value: unknown): value is CategoryMap {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    Array.isArray(v.income) &&
+    Array.isArray(v.expense) &&
+    v.income.every((x) => typeof x === "string") &&
+    v.expense.every((x) => typeof x === "string")
+  );
 }
 
-export function downloadJSON(filename = "transactions.json"): void {
+type Snapshot = {
+  version: 2;
+  categories: CategoryMap;
+  transactions: Transaction[];
+};
+
+export function exportToJSON(): string {
+  const snapshot: Snapshot = {
+    version: 2,
+    categories: catStore,
+    transactions: txStore,
+  };
+  return JSON.stringify(snapshot, null, 2);
+}
+
+export function downloadJSON(filename = "finances.json"): void {
   if (typeof window === "undefined") return;
   const blob = new Blob([exportToJSON()], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -101,7 +223,7 @@ export function downloadJSON(filename = "transactions.json"): void {
 }
 
 export type ImportResult =
-  | { ok: true; count: number }
+  | { ok: true; transactionCount: number; categoryCount: number }
   | { ok: false; error: string };
 
 export function importFromJSON(text: string): ImportResult {
@@ -111,21 +233,67 @@ export function importFromJSON(text: string): ImportResult {
   } catch {
     return { ok: false, error: "File is not valid JSON." };
   }
-  if (!Array.isArray(parsed)) {
-    return { ok: false, error: "JSON root must be an array of transactions." };
-  }
-  const valid: Transaction[] = [];
-  for (const item of parsed) {
-    if (!isTransaction(item)) {
+
+  let transactions: Transaction[];
+  let categories: CategoryMap;
+
+  if (Array.isArray(parsed)) {
+    transactions = [];
+    for (const item of parsed) {
+      if (!isTransaction(item)) {
+        return {
+          ok: false,
+          error: "One or more transactions are missing required fields.",
+        };
+      }
+      transactions.push(item);
+    }
+    categories = {
+      income: [...DEFAULT_CATEGORIES.income],
+      expense: [...DEFAULT_CATEGORIES.expense],
+    };
+  } else if (typeof parsed === "object" && parsed !== null) {
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.transactions)) {
+      return { ok: false, error: "Missing 'transactions' array." };
+    }
+    transactions = [];
+    for (const item of obj.transactions) {
+      if (!isTransaction(item)) {
+        return {
+          ok: false,
+          error: "One or more transactions are missing required fields.",
+        };
+      }
+      transactions.push(item);
+    }
+    if (obj.categories === undefined) {
+      categories = {
+        income: [...DEFAULT_CATEGORIES.income],
+        expense: [...DEFAULT_CATEGORIES.expense],
+      };
+    } else if (isCategoryMap(obj.categories)) {
+      categories = {
+        income: [...obj.categories.income],
+        expense: [...obj.categories.expense],
+      };
+    } else {
       return {
         ok: false,
-        error: "One or more entries are missing required fields.",
+        error: "'categories' must be { income: string[], expense: string[] }.",
       };
     }
-    valid.push(item);
+  } else {
+    return { ok: false, error: "JSON root must be an object or an array." };
   }
-  commit(valid);
-  return { ok: true, count: valid.length };
+
+  commitTx(transactions);
+  commitCat(categories);
+  return {
+    ok: true,
+    transactionCount: transactions.length,
+    categoryCount: categories.income.length + categories.expense.length,
+  };
 }
 
 export type Summary = {

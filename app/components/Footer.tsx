@@ -40,6 +40,12 @@ export function Footer() {
                 >
                   Summary
                 </Link>
+                <Link
+                  href="/categories"
+                  className="text-sm text-white/60 hover:text-white transition-colors"
+                >
+                  Categories
+                </Link>
                 <a
                   href="https://machcomputing.com"
                   className="text-sm text-white/60 hover:text-white transition-colors"
