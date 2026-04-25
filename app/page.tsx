@@ -307,7 +307,7 @@ export default function TransactionsPage() {
         </div>
       </section>
 
-      <section className="py-20 lg:py-28 flex-1">
+      <section className="py-20 lg:py-28 bg-mc-dark/[0.02] flex-1">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6">
             <div>

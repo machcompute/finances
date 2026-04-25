@@ -170,7 +170,7 @@ export default function SummaryPage() {
         </div>
       </section>
 
-      <section className="py-20 lg:py-28 bg-mc-dark/[0.02] flex-1">
+      <section className="py-20 lg:py-28">
         <div className="max-w-7xl mx-auto px-6">
           <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
             By Category
@@ -208,7 +208,7 @@ export default function SummaryPage() {
         </div>
       </section>
 
-      <section className="py-20 lg:py-28">
+      <section className="py-20 lg:py-28 bg-mc-dark/[0.02] flex-1">
         <div className="max-w-7xl mx-auto px-6">
           <h2 className="text-3xl sm:text-4xl font-bold text-mc-dark tracking-tight">
             Daily flow
