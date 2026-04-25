@@ -7,9 +7,9 @@ import { Footer } from "./components/Footer";
 import {
   TransactionKind,
   addTransaction,
-  downloadJSON,
+  downloadOFX,
   formatAmount,
-  importFromJSON,
+  importOFX,
   removeTransaction,
   useCategories,
   useTransactions,
@@ -50,14 +50,22 @@ export default function TransactionsPage() {
   async function runImport(file: File) {
     try {
       const text = await file.text();
-      const result = importFromJSON(text);
+      const result = importOFX(text);
       if (result.ok) {
-        const tx = result.transactionCount;
-        const cat = result.categoryCount;
-        setImportMessage({
-          kind: "ok",
-          text: `Loaded ${tx} transaction${tx === 1 ? "" : "s"} and ${cat} categor${cat === 1 ? "y" : "ies"}.`,
-        });
+        const parts = [
+          `Imported ${result.added} new transaction${result.added === 1 ? "" : "s"}`,
+        ];
+        if (result.skipped > 0) {
+          parts.push(
+            `${result.skipped} duplicate${result.skipped === 1 ? "" : "s"} skipped`,
+          );
+        }
+        if (result.categoriesAdded > 0) {
+          parts.push(
+            `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"} added`,
+          );
+        }
+        setImportMessage({ kind: "ok", text: `${parts.join(", ")}.` });
       } else {
         setImportMessage({ kind: "error", text: result.error });
       }
@@ -150,7 +158,7 @@ export default function TransactionsPage() {
           <div className="absolute inset-4 rounded-2xl border-2 border-dashed border-mc-lavender bg-mc-lavender/15 backdrop-blur-sm" />
           <div className="relative px-6 py-4 rounded-full bg-white border border-mc-gray/15 shadow-lg">
             <span className="text-sm font-medium text-mc-dark">
-              Drop JSON to import
+              Drop OFX to import
             </span>
           </div>
         </div>
@@ -164,7 +172,7 @@ export default function TransactionsPage() {
               Track Your <span className="text-mc-lavender">Money</span>
             </h1>
             <p className="mt-6 text-lg text-mc-gray leading-relaxed max-w-lg">
-              Log income and expenses. Download your data as JSON to keep it.
+              Log income and expenses. Download your data as OFX to keep it.
             </p>
           </div>
           <div className="flex-1 w-full max-w-xl lg:max-w-none">
@@ -307,11 +315,11 @@ export default function TransactionsPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => downloadJSON()}
+                onClick={() => downloadOFX()}
                 disabled={sorted.length === 0}
                 className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Download JSON
+                Download OFX
               </button>
               <button
                 type="button"
@@ -319,12 +327,12 @@ export default function TransactionsPage() {
                 title="Or drop a file anywhere on the page"
                 className="text-sm font-medium px-4 py-2 rounded-full bg-mc-mint/20 text-mc-dark/80 border border-mc-mint/30 hover:bg-mc-mint/30 transition-colors"
               >
-                Upload JSON
+                Upload OFX
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/json,.json"
+                accept="application/x-ofx,.ofx,.qfx"
                 onChange={handleFileChange}
                 className="hidden"
               />

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { exportToOFX, fitidFromId, parseOFX } from "./ofx";
 
 export type TransactionKind = "income" | "expense";
 
@@ -169,49 +170,11 @@ export function countCategoryUsage(
   return n;
 }
 
-function isTransaction(value: unknown): value is Transaction {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.id === "string" &&
-    (v.kind === "income" || v.kind === "expense") &&
-    typeof v.amount === "number" &&
-    isFinite(v.amount) &&
-    typeof v.category === "string" &&
-    typeof v.date === "string" &&
-    (v.note === undefined || typeof v.note === "string")
-  );
-}
-
-function isCategoryMap(value: unknown): value is CategoryMap {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    Array.isArray(v.income) &&
-    Array.isArray(v.expense) &&
-    v.income.every((x) => typeof x === "string") &&
-    v.expense.every((x) => typeof x === "string")
-  );
-}
-
-type Snapshot = {
-  version: 2;
-  categories: CategoryMap;
-  transactions: Transaction[];
-};
-
-export function exportToJSON(): string {
-  const snapshot: Snapshot = {
-    version: 2,
-    categories: catStore,
-    transactions: txStore,
-  };
-  return JSON.stringify(snapshot, null, 2);
-}
-
-export function downloadJSON(filename = "finances.json"): void {
+export function downloadOFX(filename = "finances.ofx"): void {
   if (typeof window === "undefined") return;
-  const blob = new Blob([exportToJSON()], { type: "application/json" });
+  const blob = new Blob([exportToOFX(txStore)], {
+    type: "application/x-ofx",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -222,77 +185,64 @@ export function downloadJSON(filename = "finances.json"): void {
   URL.revokeObjectURL(url);
 }
 
-export type ImportResult =
-  | { ok: true; transactionCount: number; categoryCount: number }
+export type OFXImportResult =
+  | {
+      ok: true;
+      added: number;
+      skipped: number;
+      categoriesAdded: number;
+    }
   | { ok: false; error: string };
 
-export function importFromJSON(text: string): ImportResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "File is not valid JSON." };
+export function importOFX(text: string): OFXImportResult {
+  const parsed = parseOFX(text);
+  if (!parsed.ok) return parsed;
+
+  const existingIds = new Set(txStore.map((t) => fitidFromId(t.id)));
+  const lcIndex: Record<TransactionKind, Set<string>> = {
+    income: new Set(catStore.income.map((c) => c.toLowerCase())),
+    expense: new Set(catStore.expense.map((c) => c.toLowerCase())),
+  };
+  const nextCats: CategoryMap = {
+    income: [...catStore.income],
+    expense: [...catStore.expense],
+  };
+  let categoriesAdded = 0;
+
+  const toAdd: Transaction[] = [];
+  let skipped = 0;
+  for (const p of parsed.transactions) {
+    if (existingIds.has(p.fitid)) {
+      skipped++;
+      continue;
+    }
+    const kind: TransactionKind = p.amount >= 0 ? "income" : "expense";
+    const rawCategory = (p.category ?? p.name ?? "").trim();
+    const category = rawCategory || "Other";
+    const lc = category.toLowerCase();
+    if (!lcIndex[kind].has(lc)) {
+      lcIndex[kind].add(lc);
+      nextCats[kind].push(category);
+      categoriesAdded++;
+    }
+    toAdd.push({
+      id: p.fitid,
+      kind,
+      amount: Math.abs(p.amount),
+      category,
+      date: p.date,
+      note: p.memo,
+    });
   }
 
-  let transactions: Transaction[];
-  let categories: CategoryMap;
+  if (categoriesAdded > 0) commitCat(nextCats);
+  if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
-  if (Array.isArray(parsed)) {
-    transactions = [];
-    for (const item of parsed) {
-      if (!isTransaction(item)) {
-        return {
-          ok: false,
-          error: "One or more transactions are missing required fields.",
-        };
-      }
-      transactions.push(item);
-    }
-    categories = {
-      income: [...DEFAULT_CATEGORIES.income],
-      expense: [...DEFAULT_CATEGORIES.expense],
-    };
-  } else if (typeof parsed === "object" && parsed !== null) {
-    const obj = parsed as Record<string, unknown>;
-    if (!Array.isArray(obj.transactions)) {
-      return { ok: false, error: "Missing 'transactions' array." };
-    }
-    transactions = [];
-    for (const item of obj.transactions) {
-      if (!isTransaction(item)) {
-        return {
-          ok: false,
-          error: "One or more transactions are missing required fields.",
-        };
-      }
-      transactions.push(item);
-    }
-    if (obj.categories === undefined) {
-      categories = {
-        income: [...DEFAULT_CATEGORIES.income],
-        expense: [...DEFAULT_CATEGORIES.expense],
-      };
-    } else if (isCategoryMap(obj.categories)) {
-      categories = {
-        income: [...obj.categories.income],
-        expense: [...obj.categories.expense],
-      };
-    } else {
-      return {
-        ok: false,
-        error: "'categories' must be { income: string[], expense: string[] }.",
-      };
-    }
-  } else {
-    return { ok: false, error: "JSON root must be an object or an array." };
-  }
-
-  commitTx(transactions);
-  commitCat(categories);
   return {
     ok: true,
-    transactionCount: transactions.length,
-    categoryCount: categories.income.length + categories.expense.length,
+    added: toAdd.length,
+    skipped,
+    categoriesAdded,
   };
 }
 
