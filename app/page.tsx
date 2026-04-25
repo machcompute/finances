@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Nav } from "./components/Nav";
 import { Footer } from "./components/Footer";
+import { Pagination } from "./components/Pagination";
+
+const PAGE_SIZE = 20;
 import {
   TransactionKind,
   addTransaction,
@@ -65,6 +68,9 @@ export default function TransactionsPage() {
             `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"} added`,
           );
         }
+        if (result.baselineApplied) {
+          parts.push("baseline restored");
+        }
         setImportMessage({ kind: "ok", text: `${parts.join(", ")}.` });
       } else {
         setImportMessage({ kind: "error", text: result.error });
@@ -114,12 +120,19 @@ export default function TransactionsPage() {
     await runImport(file);
   }
 
+  const [page, setPage] = useState(1);
   const sorted = useMemo(
     () =>
       [...txs].sort((a, b) =>
         a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
       ),
     [txs],
+  );
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageItems = sorted.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE,
   );
 
   function selectKind(next: TransactionKind) {
@@ -329,6 +342,12 @@ export default function TransactionsPage() {
               >
                 Upload OFX
               </button>
+              <Link
+                href="/import"
+                className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lime/30 text-mc-dark/80 border border-mc-lime/40 hover:bg-mc-lime/50 transition-colors"
+              >
+                Import CSV &rarr;
+              </Link>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -364,15 +383,21 @@ export default function TransactionsPage() {
               </p>
             ) : (
               <ul className="divide-y divide-mc-gray/10">
-                {sorted.map((tx) => (
+                {pageItems.map((tx) => (
                   <li
                     key={tx.id}
                     className="py-6 first:pt-0 last:pb-0 flex items-start justify-between gap-4"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-3 flex-wrap">
-                        <h3 className="text-base font-semibold text-mc-dark leading-snug">
-                          {tx.category}
+                        <h3
+                          className={`text-base font-semibold leading-snug ${
+                            tx.category
+                              ? "text-mc-dark"
+                              : "italic text-mc-gray"
+                          }`}
+                        >
+                          {tx.category ?? "Uncategorized"}
                         </h3>
                         <span
                           className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${
@@ -410,6 +435,13 @@ export default function TransactionsPage() {
                 ))}
               </ul>
             )}
+            <Pagination
+              page={safePage}
+              pageCount={pageCount}
+              total={sorted.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+            />
           </div>
         </div>
       </section>

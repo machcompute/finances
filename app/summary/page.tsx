@@ -14,16 +14,22 @@ import {
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
 import {
+  Baseline,
   Transaction,
   formatAmount,
   summarize,
+  useBaseline,
   useTransactions,
 } from "../lib/transactions";
 
 export default function SummaryPage() {
   const txs = useTransactions();
+  const baseline = useBaseline();
   const summary = useMemo(() => summarize(txs), [txs]);
-  const balanceSeries = useMemo(() => buildBalanceSeries(txs), [txs]);
+  const balanceSeries = useMemo(
+    () => buildBalanceSeries(txs, baseline),
+    [txs, baseline],
+  );
 
   const expenseEntries = Object.entries(summary.byCategory.expense).sort(
     (a, b) => b[1] - a[1],
@@ -34,7 +40,8 @@ export default function SummaryPage() {
   const maxExpense = expenseEntries.reduce((m, [, v]) => Math.max(m, v), 0);
   const maxIncome = incomeEntries.reduce((m, [, v]) => Math.max(m, v), 0);
 
-  const balanceDot = summary.balance >= 0 ? "bg-mc-mint" : "bg-mc-lavender";
+  const currentBalance = (baseline?.amount ?? 0) + summary.balance;
+  const balanceDot = currentBalance >= 0 ? "bg-mc-mint" : "bg-mc-lavender";
   const empty = txs.length === 0;
 
   return (
@@ -78,7 +85,7 @@ export default function SummaryPage() {
               />
               <SummaryCard
                 label="Balance"
-                amount={summary.balance}
+                amount={currentBalance}
                 dotClass={balanceDot}
                 signed
               />
@@ -217,19 +224,38 @@ function CategoryColumn({
 
 type BalancePoint = { date: string; balance: number };
 
-function buildBalanceSeries(txs: Transaction[]): BalancePoint[] {
-  if (txs.length === 0) return [];
+function buildBalanceSeries(
+  txs: Transaction[],
+  baseline: Baseline | null,
+): BalancePoint[] {
+  if (txs.length === 0 && !baseline) return [];
   const byDate = new Map<string, number>();
   for (const tx of txs) {
     const sign = tx.kind === "income" ? 1 : -1;
     byDate.set(tx.date, (byDate.get(tx.date) ?? 0) + sign * tx.amount);
   }
   const dates = [...byDate.keys()].sort();
-  let running = 0;
-  return dates.map((date) => {
+  let running = baseline?.amount ?? 0;
+  const points: BalancePoint[] = [];
+  if (baseline) {
+    points.push({
+      date: baseline.date,
+      balance: Math.round(running * 100) / 100,
+    });
+  }
+  for (const date of dates) {
+    if (baseline && date <= baseline.date) {
+      running += byDate.get(date) ?? 0;
+      points[points.length - 1] = {
+        date: baseline.date,
+        balance: Math.round(running * 100) / 100,
+      };
+      continue;
+    }
     running += byDate.get(date) ?? 0;
-    return { date, balance: Math.round(running * 100) / 100 };
-  });
+    points.push({ date, balance: Math.round(running * 100) / 100 });
+  }
+  return points;
 }
 
 function BalanceChart({ data }: { data: BalancePoint[] }) {

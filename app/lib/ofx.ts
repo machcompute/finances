@@ -1,4 +1,8 @@
-import { Transaction } from "./transactions";
+import {
+  Baseline,
+  Transaction,
+  UNCATEGORIZED_LABEL,
+} from "./transactions";
 
 export type ParsedOFXTransaction = {
   fitid: string;
@@ -10,9 +14,20 @@ export type ParsedOFXTransaction = {
   category?: string;
 };
 
+export type ParsedOFXBaseline = {
+  amount: number;
+  date: string;
+};
+
 export type OFXParseResult =
-  | { ok: true; transactions: ParsedOFXTransaction[] }
+  | {
+      ok: true;
+      transactions: ParsedOFXTransaction[];
+      baseline: ParsedOFXBaseline | null;
+    }
   | { ok: false; error: string };
+
+export const BASELINE_ACCTID = "finances-baseline";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -63,7 +78,10 @@ export function fitidFromId(id: string): string {
   return id.replace(/[^A-Za-z0-9]/g, "").slice(0, 32) || "tx";
 }
 
-export function exportToOFX(txs: Transaction[]): string {
+export function exportToOFX(
+  txs: Transaction[],
+  baseline: Baseline | null = null,
+): string {
   const now = new Date();
   const dtServer = formatOFXDateTime(now);
 
@@ -75,7 +93,7 @@ export function exportToOFX(txs: Transaction[]): string {
       ? isoDateToOFX(sortedDates[sortedDates.length - 1])
       : dtServer;
 
-  let runningBalance = 0;
+  let runningBalance = baseline?.amount ?? 0;
   const stmttrns = txs
     .map((tx) => {
       const sign = tx.kind === "income" ? 1 : -1;
@@ -84,23 +102,54 @@ export function exportToOFX(txs: Transaction[]): string {
       const amount = signedAmount.toFixed(2);
       const trntype = tx.kind === "income" ? "CREDIT" : "DEBIT";
       const fitid = fitidFromId(tx.id);
-      const name = escapeXML(tx.category).slice(0, 32);
-      const memoText = tx.note
-        ? `[${tx.category}] ${tx.note}`
-        : `[${tx.category}]`;
+      const categoryLabel = tx.category ?? UNCATEGORIZED_LABEL;
+      const name = escapeXML(categoryLabel).slice(0, 32);
+      const memoText = tx.category
+        ? tx.note
+          ? `[${tx.category}] ${tx.note}`
+          : `[${tx.category}]`
+        : tx.note ?? "";
+      const memoLine = memoText
+        ? `\n        <MEMO>${escapeXML(memoText)}</MEMO>`
+        : "";
       return (
         `      <STMTTRN>\n` +
         `        <TRNTYPE>${trntype}</TRNTYPE>\n` +
         `        <DTPOSTED>${isoDateToOFX(tx.date)}</DTPOSTED>\n` +
         `        <TRNAMT>${amount}</TRNAMT>\n` +
         `        <FITID>${fitid}</FITID>\n` +
-        `        <NAME>${name}</NAME>\n` +
-        `        <MEMO>${escapeXML(memoText)}</MEMO>\n` +
+        `        <NAME>${name}</NAME>${memoLine}\n` +
         `      </STMTTRN>`
       );
     })
     .join("\n");
   const balAmt = runningBalance.toFixed(2);
+
+  const baselineStatement = baseline
+    ? `    <STMTTRNRS>\n` +
+      `      <TRNUID>0</TRNUID>\n` +
+      `      <STATUS>\n` +
+      `        <CODE>0</CODE>\n` +
+      `        <SEVERITY>INFO</SEVERITY>\n` +
+      `      </STATUS>\n` +
+      `      <STMTRS>\n` +
+      `        <CURDEF>USD</CURDEF>\n` +
+      `        <BANKACCTFROM>\n` +
+      `          <BANKID>000000000</BANKID>\n` +
+      `          <ACCTID>${BASELINE_ACCTID}</ACCTID>\n` +
+      `          <ACCTTYPE>CHECKING</ACCTTYPE>\n` +
+      `        </BANKACCTFROM>\n` +
+      `        <BANKTRANLIST>\n` +
+      `          <DTSTART>${isoDateToOFX(baseline.date)}</DTSTART>\n` +
+      `          <DTEND>${isoDateToOFX(baseline.date)}</DTEND>\n` +
+      `        </BANKTRANLIST>\n` +
+      `        <LEDGERBAL>\n` +
+      `          <BALAMT>${baseline.amount.toFixed(2)}</BALAMT>\n` +
+      `          <DTASOF>${isoDateToOFX(baseline.date)}</DTASOF>\n` +
+      `        </LEDGERBAL>\n` +
+      `      </STMTRS>\n` +
+      `    </STMTTRNRS>\n`
+    : "";
 
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -117,6 +166,7 @@ export function exportToOFX(txs: Transaction[]): string {
     `    </SONRS>\n` +
     `  </SIGNONMSGSRSV1>\n` +
     `  <BANKMSGSRSV1>\n` +
+    baselineStatement +
     `    <STMTTRNRS>\n` +
     `      <TRNUID>1</TRNUID>\n` +
     `      <STATUS>\n` +
@@ -191,11 +241,29 @@ export function parseOFX(text: string): OFXParseResult {
     });
   }
 
-  if (transactions.length === 0) {
+  let baseline: ParsedOFXBaseline | null = null;
+  const stmtBlockRegex = /<STMTTRNRS>([\s\S]*?)<\/STMTTRNRS>/gi;
+  let stmtMatch: RegExpExecArray | null;
+  while ((stmtMatch = stmtBlockRegex.exec(body)) !== null) {
+    const block = stmtMatch[1];
+    const acctid = extractField(block, "ACCTID");
+    if (acctid !== BASELINE_ACCTID) continue;
+    const balAmtStr = extractField(block, "BALAMT");
+    const dtAsOf = extractField(block, "DTASOF");
+    if (!balAmtStr || !dtAsOf) continue;
+    const amount = parseFloat(balAmtStr);
+    if (!isFinite(amount)) continue;
+    const date = ofxDateToISO(dtAsOf);
+    if (!date) continue;
+    baseline = { amount, date };
+    break;
+  }
+
+  if (transactions.length === 0 && !baseline) {
     return {
       ok: false,
-      error: "No <STMTTRN> entries found in the OFX file.",
+      error: "No <STMTTRN> entries or baseline found in the OFX file.",
     };
   }
-  return { ok: true, transactions };
+  return { ok: true, transactions, baseline };
 }

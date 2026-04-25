@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { exportToOFX, fitidFromId, parseOFX } from "./ofx";
+import { suggestCategory } from "./csv";
 
 export type TransactionKind = "income" | "expense";
 
@@ -7,10 +8,13 @@ export type Transaction = {
   id: string;
   kind: TransactionKind;
   amount: number;
-  category: string;
+  category?: string;
   date: string;
   note?: string;
+  account?: string;
 };
+
+export const UNCATEGORIZED_LABEL = "Uncategorized";
 
 export type CategoryMap = Record<TransactionKind, string[]>;
 
@@ -27,17 +31,22 @@ export const DEFAULT_CATEGORIES: CategoryMap = {
   ],
 };
 
+export type Baseline = { amount: number; date: string };
+
 const SERVER_TX_SNAPSHOT: Transaction[] = [];
 const SERVER_CAT_SNAPSHOT: CategoryMap = DEFAULT_CATEGORIES;
+const SERVER_BASELINE_SNAPSHOT: Baseline | null = null;
 
 let txStore: Transaction[] = [];
 let catStore: CategoryMap = {
   income: [...DEFAULT_CATEGORIES.income],
   expense: [...DEFAULT_CATEGORIES.expense],
 };
+let baselineStore: Baseline | null = null;
 
 const txListeners = new Set<() => void>();
 const catListeners = new Set<() => void>();
+const baselineListeners = new Set<() => void>();
 
 function subscribeTx(listener: () => void): () => void {
   txListeners.add(listener);
@@ -61,6 +70,35 @@ function commitTx(next: Transaction[]): void {
 function commitCat(next: CategoryMap): void {
   catStore = next;
   catListeners.forEach((l) => l());
+}
+
+function subscribeBaseline(listener: () => void): () => void {
+  baselineListeners.add(listener);
+  return () => {
+    baselineListeners.delete(listener);
+  };
+}
+
+function commitBaseline(next: Baseline | null): void {
+  baselineStore = next;
+  baselineListeners.forEach((l) => l());
+}
+
+export function useBaseline(): Baseline | null {
+  return useSyncExternalStore(
+    subscribeBaseline,
+    () => baselineStore,
+    () => SERVER_BASELINE_SNAPSHOT,
+  );
+}
+
+export function setBaseline(amount: number, date: string): void {
+  if (!isFinite(amount) || !date) return;
+  commitBaseline({ amount, date });
+}
+
+export function clearBaseline(): void {
+  if (baselineStore !== null) commitBaseline(null);
 }
 
 export function useTransactions(): Transaction[] {
@@ -89,6 +127,69 @@ export function addTransaction(tx: Omit<Transaction, "id">): void {
 
 export function removeTransaction(id: string): void {
   commitTx(txStore.filter((t) => t.id !== id));
+}
+
+export function setTransactionCategory(
+  id: string,
+  category: string | undefined,
+): void {
+  let changed = false;
+  const next = txStore.map((tx) => {
+    if (tx.id !== id) return tx;
+    const trimmed = category?.trim() || undefined;
+    if (tx.category === trimmed) return tx;
+    changed = true;
+    return { ...tx, category: trimmed };
+  });
+  if (changed) commitTx(next);
+}
+
+function freshId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export type BatchAddResult = {
+  added: number;
+  categoriesAdded: number;
+};
+
+export function addTransactionsBatch(
+  txs: Omit<Transaction, "id">[],
+): BatchAddResult {
+  if (txs.length === 0) {
+    return { added: 0, categoriesAdded: 0 };
+  }
+
+  const lcIndex: Record<TransactionKind, Set<string>> = {
+    income: new Set(catStore.income.map((c) => c.toLowerCase())),
+    expense: new Set(catStore.expense.map((c) => c.toLowerCase())),
+  };
+  const nextCats: CategoryMap = {
+    income: [...catStore.income],
+    expense: [...catStore.expense],
+  };
+  let categoriesAdded = 0;
+
+  const toAdd: Transaction[] = [];
+  for (const draft of txs) {
+    if (draft.category) {
+      const lc = draft.category.toLowerCase();
+      if (!lcIndex[draft.kind].has(lc)) {
+        lcIndex[draft.kind].add(lc);
+        nextCats[draft.kind].push(draft.category);
+        categoriesAdded++;
+      }
+    }
+    toAdd.push({ ...draft, id: freshId() });
+  }
+
+  if (categoriesAdded > 0) commitCat(nextCats);
+  if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
+
+  return { added: toAdd.length, categoriesAdded };
 }
 
 function normalizeCategory(name: string): string {
@@ -172,7 +273,7 @@ export function countCategoryUsage(
 
 export function downloadOFX(filename = "finances.ofx"): void {
   if (typeof window === "undefined") return;
-  const blob = new Blob([exportToOFX(txStore)], {
+  const blob = new Blob([exportToOFX(txStore, baselineStore)], {
     type: "application/x-ofx",
   });
   const url = URL.createObjectURL(blob);
@@ -191,6 +292,7 @@ export type OFXImportResult =
       added: number;
       skipped: number;
       categoriesAdded: number;
+      baselineApplied: boolean;
     }
   | { ok: false; error: string };
 
@@ -235,13 +337,18 @@ export function importOFX(text: string): OFXImportResult {
       p.name ??
       ""
     ).trim();
-    const category = rawCategory || "Other";
+    const category =
+      rawCategory && rawCategory !== UNCATEGORIZED_LABEL
+        ? rawCategory
+        : undefined;
 
-    const lc = category.toLowerCase();
-    if (!lcIndex[kind].has(lc)) {
-      lcIndex[kind].add(lc);
-      nextCats[kind].push(category);
-      categoriesAdded++;
+    if (category) {
+      const lc = category.toLowerCase();
+      if (!lcIndex[kind].has(lc)) {
+        lcIndex[kind].add(lc);
+        nextCats[kind].push(category);
+        categoriesAdded++;
+      }
     }
     toAdd.push({
       id: p.fitid,
@@ -256,11 +363,21 @@ export function importOFX(text: string): OFXImportResult {
   if (categoriesAdded > 0) commitCat(nextCats);
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
+  let baselineApplied = false;
+  if (parsed.baseline) {
+    commitBaseline({
+      amount: parsed.baseline.amount,
+      date: parsed.baseline.date,
+    });
+    baselineApplied = true;
+  }
+
   return {
     ok: true,
     added: toAdd.length,
     skipped,
     categoriesAdded,
+    baselineApplied,
   };
 }
 
@@ -282,18 +399,120 @@ export function summarize(txs: Transaction[]): Summary {
     byCategory: { income: {}, expense: {} },
   };
   for (const tx of txs) {
+    const cat = tx.category || UNCATEGORIZED_LABEL;
     if (tx.kind === "income") {
       summary.totalIncome += tx.amount;
-      summary.byCategory.income[tx.category] =
-        (summary.byCategory.income[tx.category] ?? 0) + tx.amount;
+      summary.byCategory.income[cat] =
+        (summary.byCategory.income[cat] ?? 0) + tx.amount;
     } else {
       summary.totalExpense += tx.amount;
-      summary.byCategory.expense[tx.category] =
-        (summary.byCategory.expense[tx.category] ?? 0) + tx.amount;
+      summary.byCategory.expense[cat] =
+        (summary.byCategory.expense[cat] ?? 0) + tx.amount;
     }
   }
   summary.balance = summary.totalIncome - summary.totalExpense;
   return summary;
+}
+
+export type ResyncResult = {
+  scanned: number;
+  reclassified: number;
+  remaining: number;
+  categoriesAdded: number;
+};
+
+export type ResyncProposal = {
+  txId: string;
+  description: string;
+  kind: TransactionKind;
+  suggestedCategory: string | null;
+  similarity: number | null;
+};
+
+export function previewResync(threshold?: number): ResyncProposal[] {
+  const proposals: ResyncProposal[] = [];
+  for (const tx of txStore) {
+    if (tx.category) continue;
+    const description = (tx.note ?? "").trim();
+    if (!description) {
+      proposals.push({
+        txId: tx.id,
+        description: "",
+        kind: tx.kind,
+        suggestedCategory: null,
+        similarity: null,
+      });
+      continue;
+    }
+    const s = suggestCategory({
+      description,
+      kind: tx.kind,
+      txs: txStore,
+      threshold,
+    });
+    proposals.push({
+      txId: tx.id,
+      description,
+      kind: tx.kind,
+      suggestedCategory: s?.category ?? null,
+      similarity: s?.similarity ?? null,
+    });
+  }
+  return proposals;
+}
+
+export function resyncCategories(threshold?: number): ResyncResult {
+  const lcIndex: Record<TransactionKind, Set<string>> = {
+    income: new Set(catStore.income.map((c) => c.toLowerCase())),
+    expense: new Set(catStore.expense.map((c) => c.toLowerCase())),
+  };
+  const nextCats: CategoryMap = {
+    income: [...catStore.income],
+    expense: [...catStore.expense],
+  };
+  let categoriesAdded = 0;
+
+  let scanned = 0;
+  let reclassified = 0;
+  let remaining = 0;
+  const next: Transaction[] = [];
+  for (const tx of txStore) {
+    if (tx.category) {
+      next.push(tx);
+      continue;
+    }
+    scanned++;
+    const description = (tx.note ?? "").trim();
+    if (!description) {
+      next.push(tx);
+      remaining++;
+      continue;
+    }
+    const s = suggestCategory({
+      description,
+      kind: tx.kind,
+      txs: txStore,
+      threshold,
+    });
+    if (!s) {
+      next.push(tx);
+      remaining++;
+      continue;
+    }
+    const lc = s.category.toLowerCase();
+    if (!lcIndex[tx.kind].has(lc)) {
+      lcIndex[tx.kind].add(lc);
+      nextCats[tx.kind].push(s.category);
+      categoriesAdded++;
+    }
+    next.push({ ...tx, category: s.category });
+    reclassified++;
+  }
+
+  if (categoriesAdded > 0) commitCat(nextCats);
+  if (reclassified > 0) commitTx(next);
+
+  return { scanned, reclassified, remaining, categoriesAdded };
 }
 
 export function formatAmount(amount: number): string {
