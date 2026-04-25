@@ -4,14 +4,17 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
-import { CategoryInput } from "../components/CategoryInput";
+import {
+  CategoryDatalist,
+  CategoryInput,
+} from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
 import { DEFAULT_SIMILARITY_THRESHOLD } from "../lib/csv";
 import {
   UNCATEGORIZED_LABEL,
+  applyResyncProposals,
   formatAmount,
   previewResync,
-  resyncCategories,
   setTransactionCategory,
   useCategories,
   useTransactions,
@@ -29,6 +32,9 @@ export default function EditPage() {
   const [page, setPage] = useState(1);
   const [threshold, setThreshold] = useState(DEFAULT_SIMILARITY_THRESHOLD);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const uncategorizedCount = useMemo(
     () => txs.reduce((n, t) => (t.category ? n : n + 1), 0),
@@ -61,10 +67,23 @@ export default function EditPage() {
   ).length;
 
   function handleResync() {
-    const r = resyncCategories(threshold);
+    const accepted = proposals.filter(
+      (p) => p.suggestedCategory && !excludedIds.has(p.txId),
+    );
+    const r = applyResyncProposals(accepted);
     setResyncMessage(
       `Re-synced ${r.reclassified} of ${r.scanned} · ${r.remaining} still uncategorized`,
     );
+    setExcludedIds(new Set());
+  }
+
+  function toggleExclude(txId: string) {
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(txId)) next.delete(txId);
+      else next.add(txId);
+      return next;
+    });
   }
 
   return (
@@ -144,6 +163,8 @@ export default function EditPage() {
               proposalMatches={proposalMatches}
               threshold={threshold}
               setThreshold={setThreshold}
+              excludedIds={excludedIds}
+              toggleExclude={toggleExclude}
             />
           )}
 
@@ -156,6 +177,7 @@ export default function EditPage() {
               </p>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-mc-gray/15 bg-white">
+                <CategoryDatalist id="all-cats" options={categories} />
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
@@ -169,7 +191,6 @@ export default function EditPage() {
                   </thead>
                   <tbody className="divide-y divide-mc-gray/10">
                     {pageItems.map((tx) => {
-                      const options = categories[tx.kind];
                       return (
                         <tr key={tx.id}>
                           <td className="py-3 px-4 font-mono text-mc-gray">
@@ -212,8 +233,7 @@ export default function EditPage() {
                                   cur === tx.id ? null : cur,
                                 )
                               }
-                              options={options}
-                              listId={`edit-cats-${tx.kind}`}
+                              listId="all-cats"
                               placeholder={UNCATEGORIZED_LABEL}
                               className={`rounded-md border bg-white px-2 py-1 text-sm focus:outline-none focus:border-mc-lavender/60 transition-colors ${
                                 tx.category
@@ -259,14 +279,19 @@ function ResyncPreview({
   proposalMatches,
   threshold,
   setThreshold,
+  excludedIds,
+  toggleExclude,
 }: {
   proposals: ReturnType<typeof previewResync>;
   proposalMatches: number;
   threshold: number;
   setThreshold: (n: number) => void;
+  excludedIds: Set<string>;
+  toggleExclude: (txId: string) => void;
 }) {
   const matched = proposals.filter((p) => p.suggestedCategory !== null);
   const unmatched = proposals.length - matched.length;
+  const accepted = matched.filter((p) => !excludedIds.has(p.txId)).length;
   return (
     <div className="mt-6 p-6 rounded-2xl border border-mc-lavender/40 bg-mc-lavender/[0.07]">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -275,7 +300,7 @@ function ResyncPreview({
             Re-sync preview
           </h3>
           <p className="mt-1 text-sm text-mc-gray">
-            {proposalMatches} of {proposals.length} would be matched ·{" "}
+            {accepted} accepted · {proposalMatches - accepted} skipped ·{" "}
             {unmatched} below threshold
           </p>
         </div>
@@ -307,6 +332,7 @@ function ResyncPreview({
           <table className="min-w-full text-sm">
             <thead className="sticky top-0 bg-white">
               <tr className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
+                <th className="py-2 px-3 w-8"></th>
                 <th className="text-left py-2 px-3">Description</th>
                 <th className="text-left py-2 px-3">Kind</th>
                 <th className="text-left py-2 px-3">Will become</th>
@@ -314,8 +340,19 @@ function ResyncPreview({
               </tr>
             </thead>
             <tbody className="divide-y divide-mc-gray/10">
-              {matched.map((p) => (
-                <tr key={p.txId}>
+              {matched.map((p) => {
+                const checked = !excludedIds.has(p.txId);
+                return (
+                <tr key={p.txId} className={checked ? "" : "opacity-50"}>
+                  <td className="py-2 px-3">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleExclude(p.txId)}
+                      aria-label={`Apply suggestion for ${p.description || "row"}`}
+                      className="accent-mc-lavender"
+                    />
+                  </td>
                   <td className="py-2 px-3 text-mc-dark max-w-md">
                     <div className="truncate">{p.description || "—"}</div>
                   </td>
@@ -339,7 +376,8 @@ function ResyncPreview({
                       : "—"}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

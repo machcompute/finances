@@ -1,4 +1,4 @@
-import { Transaction, TransactionKind } from "./transactions";
+import { Transaction } from "./transactions";
 
 export type ParsedCSV = {
   headers: string[];
@@ -112,44 +112,69 @@ export type CategorySuggestion = {
   similarity: number;
 };
 
+export type CategoryIndex = Map<string, string[]>;
+
 export function similarity(a: string, b: string): number {
   const len = Math.max(a.length, b.length);
   if (len === 0) return 1;
   return 1 - levenshtein(a, b) / len;
 }
 
-export function suggestCategory(args: {
+function similarityAtLeast(a: string, b: string, floor: number): number {
+  const len = Math.max(a.length, b.length);
+  if (len === 0) return 1;
+  const ceil = 1 - Math.abs(a.length - b.length) / len;
+  if (ceil < floor) return ceil;
+  return 1 - levenshtein(a, b) / len;
+}
+
+export function buildCategoryIndex(txs: Transaction[]): CategoryIndex {
+  const index: CategoryIndex = new Map();
+  for (const tx of txs) {
+    if (!tx.category) continue;
+    const text = (tx.note ?? tx.category).trim().toLowerCase();
+    const list = index.get(tx.category) ?? [];
+    list.push(text);
+    index.set(tx.category, list);
+  }
+  return index;
+}
+
+export function suggestCategoryFromIndex(args: {
   description: string;
-  kind: TransactionKind;
-  txs: Transaction[];
+  index: CategoryIndex;
   threshold?: number;
 }): CategorySuggestion | null {
   const threshold = args.threshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const desc = args.description.trim().toLowerCase();
   if (!desc) return null;
-
-  const groups = new Map<string, string[]>();
-  for (const tx of args.txs) {
-    if (tx.kind !== args.kind) continue;
-    if (!tx.category) continue;
-    const text = (tx.note ?? tx.category).trim().toLowerCase();
-    const list = groups.get(tx.category) ?? [];
-    list.push(text);
-    groups.set(tx.category, list);
-  }
-  if (groups.size === 0) return null;
+  if (args.index.size === 0) return null;
 
   let best: CategorySuggestion | null = null;
-  for (const [category, texts] of groups) {
+  let runningFloor = threshold;
+  for (const [category, texts] of args.index) {
     let max = 0;
     for (const t of texts) {
-      const s = similarity(desc, t);
+      const s = similarityAtLeast(desc, t, runningFloor);
       if (s > max) max = s;
     }
     if (best === null || max > best.similarity) {
       best = { category, similarity: max };
+      if (max > runningFloor) runningFloor = max;
     }
   }
   if (!best || best.similarity < threshold) return null;
   return best;
+}
+
+export function suggestCategory(args: {
+  description: string;
+  txs: Transaction[];
+  threshold?: number;
+}): CategorySuggestion | null {
+  return suggestCategoryFromIndex({
+    description: args.description,
+    index: buildCategoryIndex(args.txs),
+    threshold: args.threshold,
+  });
 }

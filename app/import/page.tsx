@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
-import { CategoryInput } from "../components/CategoryInput";
+import {
+  CategoryDatalist,
+  CategoryInput,
+} from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
 import { ParsedCSV, parseCSV } from "../lib/csv";
 
@@ -281,7 +284,7 @@ export default function ImportPage() {
               derived={derived}
               stats={stats}
               baseline={baseline}
-              categoriesByKind={categories}
+              categories={categories}
               setOverride={(idx, cat) =>
                 setOverrides((o) => ({ ...o, [idx]: cat }))
               }
@@ -867,7 +870,7 @@ function ConfirmCard(props: {
   derived: DerivedRow[];
   stats: Stats;
   baseline: Baseline | null;
-  categoriesByKind: { income: string[]; expense: string[] };
+  categories: string[];
   setOverride: (idx: number, cat: string) => void;
   onBack: () => void;
   onCommit: () => void;
@@ -877,7 +880,7 @@ function ConfirmCard(props: {
     derived,
     stats,
     baseline,
-    categoriesByKind,
+    categories,
     setOverride,
     onBack,
     onCommit,
@@ -897,6 +900,8 @@ function ConfirmCard(props: {
 
   return (
     <div className="space-y-6">
+      <CategoryDatalist id="all-cats" options={categories} />
+
       <div className="p-6 rounded-2xl border border-mc-gray/15 bg-white">
         <h2 className="text-lg font-semibold text-mc-dark">Review &amp; commit</h2>
         <p className="mt-2 text-sm text-mc-gray">
@@ -917,7 +922,6 @@ function ConfirmCard(props: {
         <PreviewTable
           rows={confirmRows}
           editable
-          categoriesByKind={categoriesByKind}
           onCategoryChange={setOverride}
         />
         <Pagination
@@ -992,12 +996,10 @@ function Field({
 function PreviewTable({
   rows,
   editable,
-  categoriesByKind,
   onCategoryChange,
 }: {
   rows: DerivedRow[];
   editable: boolean;
-  categoriesByKind?: { income: string[]; expense: string[] };
   onCategoryChange?: (idx: number, cat: string) => void;
 }) {
   if (rows.length === 0) {
@@ -1055,12 +1057,11 @@ function PreviewTable({
                   )}
                 </td>
                 <td className="py-2 pr-4">
-                  {editable && r.kind && onCategoryChange && categoriesByKind ? (
+                  {editable && r.kind && onCategoryChange ? (
                     <CategoryInput
                       value={r.category ?? ""}
                       onChange={(v) => onCategoryChange(r.index, v)}
-                      options={categoriesByKind[r.kind]}
-                      listId={`import-cats-${r.kind}`}
+                      listId="all-cats"
                       placeholder={UNCATEGORIZED_LABEL}
                       className="rounded-md border border-mc-gray/15 bg-white px-2 py-1 text-sm text-mc-dark focus:outline-none focus:border-mc-lavender/60 transition-colors"
                     />

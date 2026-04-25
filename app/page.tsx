@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Nav } from "./components/Nav";
 import { Footer } from "./components/Footer";
-import { CategoryInput } from "./components/CategoryInput";
+import { CategoryDatalist, CategoryInput } from "./components/CategoryInput";
 import { Pagination } from "./components/Pagination";
 
 const PAGE_SIZE = 20;
@@ -33,7 +33,6 @@ export default function TransactionsPage() {
   const [date, setDate] = useState(todayISO);
   const [note, setNote] = useState("");
 
-  const availableCategories = categories[kind];
   const effectiveCategory = category.trim();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -192,6 +191,7 @@ export default function TransactionsPage() {
                 Add transaction
               </h2>
 
+            <CategoryDatalist id="all-cats" options={categories} />
             <form
               id="add-transaction-form"
               onSubmit={handleSubmit}
@@ -250,8 +250,7 @@ export default function TransactionsPage() {
                     <CategoryInput
                       value={category}
                       onChange={setCategory}
-                      options={availableCategories}
-                      listId={`new-tx-cats-${kind}`}
+                      listId="all-cats"
                       placeholder="Type or pick…"
                       className={inputClass}
                     />

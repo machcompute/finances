@@ -1,6 +1,6 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { exportToOFX, fitidFromId, parseOFX } from "./ofx";
-import { suggestCategory } from "./csv";
+import { buildCategoryIndex, suggestCategoryFromIndex } from "./csv";
 
 export type TransactionKind = "income" | "expense";
 
@@ -16,8 +16,6 @@ export type Transaction = {
 
 export const UNCATEGORIZED_LABEL = "Uncategorized";
 
-export type CategoryMap = Record<TransactionKind, string[]>;
-
 export type Baseline = { amount: number; date: string };
 
 const SERVER_TX_SNAPSHOT: Transaction[] = [];
@@ -25,6 +23,8 @@ const SERVER_BASELINE_SNAPSHOT: Baseline | null = null;
 
 let txStore: Transaction[] = [];
 let baselineStore: Baseline | null = null;
+let cachedIndexFor: Transaction[] | null = null;
+let cachedIndex: ReturnType<typeof buildCategoryIndex> | null = null;
 
 const txListeners = new Set<() => void>();
 const baselineListeners = new Set<() => void>();
@@ -38,21 +38,24 @@ function subscribeTx(listener: () => void): () => void {
 
 function commitTx(next: Transaction[]): void {
   txStore = next;
+  cachedIndexFor = null;
+  cachedIndex = null;
   txListeners.forEach((l) => l());
 }
 
-function deriveCategories(txs: Transaction[]): CategoryMap {
-  const income = new Set<string>();
-  const expense = new Set<string>();
+function getCategoryIndex(): ReturnType<typeof buildCategoryIndex> {
+  if (cachedIndexFor === txStore && cachedIndex) return cachedIndex;
+  cachedIndex = buildCategoryIndex(txStore);
+  cachedIndexFor = txStore;
+  return cachedIndex;
+}
+
+function deriveCategories(txs: Transaction[]): string[] {
+  const set = new Set<string>();
   for (const tx of txs) {
-    if (!tx.category) continue;
-    (tx.kind === "income" ? income : expense).add(tx.category);
+    if (tx.category) set.add(tx.category);
   }
-  const cmp = (a: string, b: string) => a.localeCompare(b);
-  return {
-    income: [...income].sort(cmp),
-    expense: [...expense].sort(cmp),
-  };
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 function subscribeBaseline(listener: () => void): () => void {
@@ -92,7 +95,7 @@ export function useTransactions(): Transaction[] {
   );
 }
 
-export function useCategories(): CategoryMap {
+export function useCategories(): string[] {
   const txs = useTransactions();
   return useMemo(() => deriveCategories(txs), [txs]);
 }
@@ -143,19 +146,15 @@ export function addTransactionsBatch(
     return { added: 0, categoriesAdded: 0 };
   }
 
-  const before = deriveCategories(txStore);
-  const seen: Record<TransactionKind, Set<string>> = {
-    income: new Set(before.income.map((c) => c.toLowerCase())),
-    expense: new Set(before.expense.map((c) => c.toLowerCase())),
-  };
+  const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
   let categoriesAdded = 0;
 
   const toAdd: Transaction[] = [];
   for (const draft of txs) {
     if (draft.category) {
       const lc = draft.category.toLowerCase();
-      if (!seen[draft.kind].has(lc)) {
-        seen[draft.kind].add(lc);
+      if (!seen.has(lc)) {
+        seen.add(lc);
         categoriesAdded++;
       }
     }
@@ -197,11 +196,7 @@ export function importOFX(text: string): OFXImportResult {
   if (!parsed.ok) return parsed;
 
   const existingIds = new Set(txStore.map((t) => fitidFromId(t.id)));
-  const before = deriveCategories(txStore);
-  const seen: Record<TransactionKind, Set<string>> = {
-    income: new Set(before.income.map((c) => c.toLowerCase())),
-    expense: new Set(before.expense.map((c) => c.toLowerCase())),
-  };
+  const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
   let categoriesAdded = 0;
 
   const toAdd: Transaction[] = [];
@@ -237,8 +232,8 @@ export function importOFX(text: string): OFXImportResult {
 
     if (category) {
       const lc = category.toLowerCase();
-      if (!seen[kind].has(lc)) {
-        seen[kind].add(lc);
+      if (!seen.has(lc)) {
+        seen.add(lc);
         categoriesAdded++;
       }
     }
@@ -320,6 +315,7 @@ export type ResyncProposal = {
 };
 
 export function previewResync(threshold?: number): ResyncProposal[] {
+  const index = getCategoryIndex();
   const proposals: ResyncProposal[] = [];
   for (const tx of txStore) {
     if (tx.category) continue;
@@ -334,10 +330,9 @@ export function previewResync(threshold?: number): ResyncProposal[] {
       });
       continue;
     }
-    const s = suggestCategory({
+    const s = suggestCategoryFromIndex({
       description,
-      kind: tx.kind,
-      txs: txStore,
+      index,
       threshold,
     });
     proposals.push({
@@ -351,7 +346,37 @@ export function previewResync(threshold?: number): ResyncProposal[] {
   return proposals;
 }
 
+export function applyResyncProposals(
+  proposals: ResyncProposal[],
+): ResyncResult {
+  const byId = new Map<string, ResyncProposal>();
+  for (const p of proposals) byId.set(p.txId, p);
+
+  let scanned = 0;
+  let reclassified = 0;
+  let remaining = 0;
+  const next: Transaction[] = [];
+  for (const tx of txStore) {
+    if (tx.category) {
+      next.push(tx);
+      continue;
+    }
+    scanned++;
+    const p = byId.get(tx.id);
+    if (p && p.suggestedCategory) {
+      next.push({ ...tx, category: p.suggestedCategory });
+      reclassified++;
+    } else {
+      next.push(tx);
+      remaining++;
+    }
+  }
+  if (reclassified > 0) commitTx(next);
+  return { scanned, reclassified, remaining };
+}
+
 export function resyncCategories(threshold?: number): ResyncResult {
+  const index = getCategoryIndex();
   let scanned = 0;
   let reclassified = 0;
   let remaining = 0;
@@ -368,10 +393,9 @@ export function resyncCategories(threshold?: number): ResyncResult {
       remaining++;
       continue;
     }
-    const s = suggestCategory({
+    const s = suggestCategoryFromIndex({
       description,
-      kind: tx.kind,
-      txs: txStore,
+      index,
       threshold,
     });
     if (!s) {
