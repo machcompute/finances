@@ -16,8 +16,10 @@ import {
   formatAmount,
   previewResync,
   setTransactionCategory,
+  useAccounts,
   useCategories,
-  useTransactions,
+  useFilteredTransactions,
+  useSelectedAccountId,
 } from "../lib/transactions";
 
 const PAGE_SIZE = 20;
@@ -25,8 +27,16 @@ const PAGE_SIZE = 20;
 type Filter = "uncategorized" | "all";
 
 export default function EditPage() {
-  const txs = useTransactions();
+  const txs = useFilteredTransactions();
+  const accounts = useAccounts();
+  const selectedAccountId = useSelectedAccountId();
   const categories = useCategories();
+  const accountById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of accounts) m.set(a.id, a.name);
+    return m;
+  }, [accounts]);
+  const showAccountColumn = selectedAccountId === null;
   const [filter, setFilter] = useState<Filter>("uncategorized");
   const [resyncMessage, setResyncMessage] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -186,7 +196,9 @@ export default function EditPage() {
                       <th className="text-left py-3 px-4">Kind</th>
                       <th className="text-right py-3 px-4">Amount</th>
                       <th className="text-left py-3 px-4">Category</th>
-                      <th className="text-left py-3 px-4">Account</th>
+                      {showAccountColumn && (
+                        <th className="text-left py-3 px-4">Account</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-mc-gray/10">
@@ -242,9 +254,11 @@ export default function EditPage() {
                               }`}
                             />
                           </td>
-                          <td className="py-3 px-4 text-mc-gray font-mono text-xs">
-                            {tx.account ?? "—"}
-                          </td>
+                          {showAccountColumn && (
+                            <td className="py-3 px-4 text-mc-gray font-mono text-xs">
+                              {accountById.get(tx.accountId) ?? "—"}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}

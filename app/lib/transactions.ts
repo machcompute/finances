@@ -1,33 +1,58 @@
 import { useMemo, useSyncExternalStore } from "react";
-import { exportToOFX, fitidFromId, parseOFX } from "./ofx";
+import { exportToOFX, fitidFromId, parseOFX, ParsedOFXAccount } from "./ofx";
 import { buildCategoryIndex, suggestCategoryFromIndex } from "./csv";
 
 export type TransactionKind = "income" | "expense";
 
+export type Account = {
+  id: string;
+  name: string;
+  color?: string;
+};
+
 export type Transaction = {
   id: string;
+  accountId: string;
   kind: TransactionKind;
   amount: number;
   category?: string;
   date: string;
   note?: string;
-  account?: string;
 };
 
 export const UNCATEGORIZED_LABEL = "Uncategorized";
+export const DEFAULT_ACCOUNT_ID = "default";
+export const DEFAULT_ACCOUNT_NAME = "Default";
 
 export type Baseline = { amount: number; date: string };
 
 const SERVER_TX_SNAPSHOT: Transaction[] = [];
-const SERVER_BASELINE_SNAPSHOT: Baseline | null = null;
+const SERVER_ACCOUNT_SNAPSHOT: Account[] = [
+  { id: DEFAULT_ACCOUNT_ID, name: DEFAULT_ACCOUNT_NAME },
+];
+const SERVER_BASELINES_SNAPSHOT: Map<string, Baseline> = new Map();
+const SERVER_SELECTED_ACCOUNT_SNAPSHOT: string | null = null;
 
 let txStore: Transaction[] = [];
-let baselineStore: Baseline | null = null;
+let accountStore: Account[] = [
+  { id: DEFAULT_ACCOUNT_ID, name: DEFAULT_ACCOUNT_NAME },
+];
+let baselineStore: Map<string, Baseline> = new Map();
+let selectedAccountIdStore: string | null = null;
 let cachedIndexFor: Transaction[] | null = null;
 let cachedIndex: ReturnType<typeof buildCategoryIndex> | null = null;
 
 const txListeners = new Set<() => void>();
+const accountListeners = new Set<() => void>();
 const baselineListeners = new Set<() => void>();
+const selectedAccountListeners = new Set<() => void>();
+
+function freshId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function subscribeTx(listener: () => void): () => void {
   txListeners.add(listener);
@@ -41,6 +66,42 @@ function commitTx(next: Transaction[]): void {
   cachedIndexFor = null;
   cachedIndex = null;
   txListeners.forEach((l) => l());
+}
+
+function subscribeAccounts(listener: () => void): () => void {
+  accountListeners.add(listener);
+  return () => {
+    accountListeners.delete(listener);
+  };
+}
+
+function commitAccounts(next: Account[]): void {
+  accountStore = next;
+  accountListeners.forEach((l) => l());
+}
+
+function subscribeBaselines(listener: () => void): () => void {
+  baselineListeners.add(listener);
+  return () => {
+    baselineListeners.delete(listener);
+  };
+}
+
+function commitBaselines(next: Map<string, Baseline>): void {
+  baselineStore = next;
+  baselineListeners.forEach((l) => l());
+}
+
+function subscribeSelectedAccount(listener: () => void): () => void {
+  selectedAccountListeners.add(listener);
+  return () => {
+    selectedAccountListeners.delete(listener);
+  };
+}
+
+function commitSelectedAccount(next: string | null): void {
+  selectedAccountIdStore = next;
+  selectedAccountListeners.forEach((l) => l());
 }
 
 function getCategoryIndex(): ReturnType<typeof buildCategoryIndex> {
@@ -58,33 +119,136 @@ function deriveCategories(txs: Transaction[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-function subscribeBaseline(listener: () => void): () => void {
-  baselineListeners.add(listener);
-  return () => {
-    baselineListeners.delete(listener);
-  };
-}
-
-function commitBaseline(next: Baseline | null): void {
-  baselineStore = next;
-  baselineListeners.forEach((l) => l());
-}
-
-export function useBaseline(): Baseline | null {
+export function useAccounts(): Account[] {
   return useSyncExternalStore(
-    subscribeBaseline,
-    () => baselineStore,
-    () => SERVER_BASELINE_SNAPSHOT,
+    subscribeAccounts,
+    () => accountStore,
+    () => SERVER_ACCOUNT_SNAPSHOT,
   );
 }
 
-export function setBaseline(amount: number, date: string): void {
-  if (!isFinite(amount) || !date) return;
-  commitBaseline({ amount, date });
+export function useSelectedAccountId(): string | null {
+  return useSyncExternalStore(
+    subscribeSelectedAccount,
+    () => selectedAccountIdStore,
+    () => SERVER_SELECTED_ACCOUNT_SNAPSHOT,
+  );
 }
 
-export function clearBaseline(): void {
-  if (baselineStore !== null) commitBaseline(null);
+export function setSelectedAccountId(id: string | null): void {
+  if (id !== null && !accountStore.some((a) => a.id === id)) return;
+  if (selectedAccountIdStore === id) return;
+  commitSelectedAccount(id);
+}
+
+export function addAccount(name: string, color?: string): Account {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Account name is required.");
+  const existing = accountStore.find(
+    (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (existing) return existing;
+  const account: Account = { id: freshId(), name: trimmed, color };
+  commitAccounts([...accountStore, account]);
+  return account;
+}
+
+export function getOrCreateAccountByName(name: string): Account {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Account name is required.");
+  const existing = accountStore.find(
+    (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (existing) return existing;
+  return addAccount(trimmed);
+}
+
+export function renameAccount(id: string, name: string): void {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  let changed = false;
+  const next = accountStore.map((a) => {
+    if (a.id !== id) return a;
+    if (a.name === trimmed) return a;
+    changed = true;
+    return { ...a, name: trimmed };
+  });
+  if (changed) commitAccounts(next);
+}
+
+export function deleteAccount(id: string): void {
+  if (accountStore.length <= 1) return;
+  if (!accountStore.some((a) => a.id === id)) return;
+  commitAccounts(accountStore.filter((a) => a.id !== id));
+  const txsLeft = txStore.filter((t) => t.accountId !== id);
+  if (txsLeft.length !== txStore.length) commitTx(txsLeft);
+  if (baselineStore.has(id)) {
+    const next = new Map(baselineStore);
+    next.delete(id);
+    commitBaselines(next);
+  }
+  if (selectedAccountIdStore === id) commitSelectedAccount(null);
+}
+
+export function pruneEmptySeededDefault(): boolean {
+  if (accountStore.length <= 1) return false;
+  const exists = accountStore.some((a) => a.id === DEFAULT_ACCOUNT_ID);
+  if (!exists) return false;
+  const hasTx = txStore.some((t) => t.accountId === DEFAULT_ACCOUNT_ID);
+  if (hasTx) return false;
+  if (baselineStore.has(DEFAULT_ACCOUNT_ID)) return false;
+  deleteAccount(DEFAULT_ACCOUNT_ID);
+  return true;
+}
+
+export function useBaselines(): Map<string, Baseline> {
+  return useSyncExternalStore(
+    subscribeBaselines,
+    () => baselineStore,
+    () => SERVER_BASELINES_SNAPSHOT,
+  );
+}
+
+export function useBaseline(accountId: string): Baseline | null {
+  const baselines = useBaselines();
+  return baselines.get(accountId) ?? null;
+}
+
+export function setBaseline(
+  accountId: string,
+  amount: number,
+  date: string,
+): void {
+  if (!isFinite(amount) || !date) return;
+  if (!accountStore.some((a) => a.id === accountId)) return;
+  const next = new Map(baselineStore);
+  next.set(accountId, { amount, date });
+  commitBaselines(next);
+}
+
+export function clearBaseline(accountId: string): void {
+  if (!baselineStore.has(accountId)) return;
+  const next = new Map(baselineStore);
+  next.delete(accountId);
+  commitBaselines(next);
+}
+
+export function aggregateBaseline(
+  baselines: Map<string, Baseline>,
+  accountIds: string[],
+): Baseline | null {
+  let amount = 0;
+  let earliest: string | null = null;
+  let any = false;
+  for (const id of accountIds) {
+    const b = baselines.get(id);
+    if (!b) continue;
+    any = true;
+    amount += b.amount;
+    if (earliest === null || b.date < earliest) earliest = b.date;
+  }
+  if (!any || earliest === null) return null;
+  return { amount, date: earliest };
 }
 
 export function useTransactions(): Transaction[] {
@@ -95,17 +259,23 @@ export function useTransactions(): Transaction[] {
   );
 }
 
+export function useFilteredTransactions(): Transaction[] {
+  const txs = useTransactions();
+  const selected = useSelectedAccountId();
+  return useMemo(() => {
+    if (selected === null) return txs;
+    return txs.filter((t) => t.accountId === selected);
+  }, [txs, selected]);
+}
+
 export function useCategories(): string[] {
   const txs = useTransactions();
   return useMemo(() => deriveCategories(txs), [txs]);
 }
 
 export function addTransaction(tx: Omit<Transaction, "id">): void {
-  const id =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  commitTx([{ ...tx, id }, ...txStore]);
+  if (!accountStore.some((a) => a.id === tx.accountId)) return;
+  commitTx([{ ...tx, id: freshId() }, ...txStore]);
 }
 
 export function removeTransaction(id: string): void {
@@ -127,13 +297,6 @@ export function setTransactionCategory(
   if (changed) commitTx(next);
 }
 
-function freshId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 export type BatchAddResult = {
   added: number;
   categoriesAdded: number;
@@ -146,11 +309,13 @@ export function addTransactionsBatch(
     return { added: 0, categoriesAdded: 0 };
   }
 
+  const validAccountIds = new Set(accountStore.map((a) => a.id));
   const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
   let categoriesAdded = 0;
 
   const toAdd: Transaction[] = [];
   for (const draft of txs) {
+    if (!validAccountIds.has(draft.accountId)) continue;
     if (draft.category) {
       const lc = draft.category.toLowerCase();
       if (!seen.has(lc)) {
@@ -168,9 +333,10 @@ export function addTransactionsBatch(
 
 export function downloadOFX(filename = "finances.ofx"): void {
   if (typeof window === "undefined") return;
-  const blob = new Blob([exportToOFX(txStore, baselineStore)], {
-    type: "application/x-ofx",
-  });
+  const blob = new Blob(
+    [exportToOFX(accountStore, txStore, baselineStore)],
+    { type: "application/x-ofx" },
+  );
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -187,17 +353,45 @@ export type OFXImportResult =
       added: number;
       skipped: number;
       categoriesAdded: number;
-      baselineApplied: boolean;
+      baselinesApplied: number;
+      accountsCreated: number;
     }
   | { ok: false; error: string };
 
-export function importOFX(text: string): OFXImportResult {
+export function importOFX(
+  text: string,
+  destinationAccountId: string,
+): OFXImportResult {
   const parsed = parseOFX(text);
   if (!parsed.ok) return parsed;
 
+  if (!accountStore.some((a) => a.id === destinationAccountId)) {
+    return { ok: false, error: "Destination account no longer exists." };
+  }
+
   const existingIds = new Set(txStore.map((t) => fitidFromId(t.id)));
-  const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
+  const seenCategories = new Set(
+    deriveCategories(txStore).map((c) => c.toLowerCase()),
+  );
   let categoriesAdded = 0;
+
+  const accountsBefore = accountStore.length;
+  const accountByLcName = new Map<string, Account>();
+  for (const a of accountStore) {
+    accountByLcName.set(a.name.toLowerCase(), a);
+  }
+
+  function resolveAccount(parsedAccount: ParsedOFXAccount): string {
+    if (parsedAccount.kind === "legacy" || parsedAccount.kind === "destination") {
+      return destinationAccountId;
+    }
+    const lc = parsedAccount.name.toLowerCase();
+    const existing = accountByLcName.get(lc);
+    if (existing) return existing.id;
+    const created = addAccount(parsedAccount.name);
+    accountByLcName.set(lc, created);
+    return created.id;
+  }
 
   const toAdd: Transaction[] = [];
   let skipped = 0;
@@ -232,13 +426,15 @@ export function importOFX(text: string): OFXImportResult {
 
     if (category) {
       const lc = category.toLowerCase();
-      if (!seen.has(lc)) {
-        seen.add(lc);
+      if (!seenCategories.has(lc)) {
+        seenCategories.add(lc);
         categoriesAdded++;
       }
     }
+
     toAdd.push({
       id: p.fitid,
+      accountId: resolveAccount(p.account),
       kind,
       amount: Math.abs(p.amount),
       category,
@@ -249,21 +445,27 @@ export function importOFX(text: string): OFXImportResult {
 
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
-  let baselineApplied = false;
-  if (parsed.baseline) {
-    commitBaseline({
-      amount: parsed.baseline.amount,
-      date: parsed.baseline.date,
-    });
-    baselineApplied = true;
+  let baselinesApplied = 0;
+  if (parsed.baselines.length > 0) {
+    const next = new Map(baselineStore);
+    for (const b of parsed.baselines) {
+      const accountId = resolveAccount(b.account);
+      next.set(accountId, { amount: b.amount, date: b.date });
+      baselinesApplied++;
+    }
+    commitBaselines(next);
   }
+
+  const accountsCreated = accountStore.length - accountsBefore;
+  if (accountsCreated > 0) pruneEmptySeededDefault();
 
   return {
     ok: true,
     added: toAdd.length,
     skipped,
     categoriesAdded,
-    baselineApplied,
+    baselinesApplied,
+    accountsCreated,
   };
 }
 

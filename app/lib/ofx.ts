@@ -1,8 +1,14 @@
 import {
+  Account,
   Baseline,
   Transaction,
   UNCATEGORIZED_LABEL,
 } from "./transactions";
+
+export type ParsedOFXAccount =
+  | { kind: "named"; name: string }
+  | { kind: "legacy" }
+  | { kind: "destination" };
 
 export type ParsedOFXTransaction = {
   fitid: string;
@@ -12,22 +18,26 @@ export type ParsedOFXTransaction = {
   name?: string;
   memo?: string;
   category?: string;
+  account: ParsedOFXAccount;
 };
 
 export type ParsedOFXBaseline = {
   amount: number;
   date: string;
+  account: ParsedOFXAccount;
 };
 
 export type OFXParseResult =
   | {
       ok: true;
       transactions: ParsedOFXTransaction[];
-      baseline: ParsedOFXBaseline | null;
+      baselines: ParsedOFXBaseline[];
     }
   | { ok: false; error: string };
 
-export const BASELINE_ACCTID = "finances-baseline";
+export const LEGACY_ACCTID = "finances";
+export const LEGACY_BASELINE_ACCTID = "finances-baseline";
+export const BASELINE_ACCTID_PREFIX = "baseline-";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -78,13 +88,47 @@ export function fitidFromId(id: string): string {
   return id.replace(/[^A-Za-z0-9]/g, "").slice(0, 32) || "tx";
 }
 
-export function exportToOFX(
-  txs: Transaction[],
-  baseline: Baseline | null = null,
-): string {
-  const now = new Date();
-  const dtServer = formatOFXDateTime(now);
+function sanitizeAcctId(name: string): string {
+  return escapeXML(name).slice(0, 32) || "account";
+}
 
+function buildBaselineStatement(account: Account, baseline: Baseline): string {
+  const acctid = sanitizeAcctId(`${BASELINE_ACCTID_PREFIX}${account.name}`);
+  return (
+    `    <STMTTRNRS>\n` +
+    `      <TRNUID>0</TRNUID>\n` +
+    `      <STATUS>\n` +
+    `        <CODE>0</CODE>\n` +
+    `        <SEVERITY>INFO</SEVERITY>\n` +
+    `      </STATUS>\n` +
+    `      <STMTRS>\n` +
+    `        <CURDEF>USD</CURDEF>\n` +
+    `        <BANKACCTFROM>\n` +
+    `          <BANKID>000000000</BANKID>\n` +
+    `          <ACCTID>${acctid}</ACCTID>\n` +
+    `          <ACCTTYPE>CHECKING</ACCTTYPE>\n` +
+    `        </BANKACCTFROM>\n` +
+    `        <BANKTRANLIST>\n` +
+    `          <DTSTART>${isoDateToOFX(baseline.date)}</DTSTART>\n` +
+    `          <DTEND>${isoDateToOFX(baseline.date)}</DTEND>\n` +
+    `        </BANKTRANLIST>\n` +
+    `        <LEDGERBAL>\n` +
+    `          <BALAMT>${baseline.amount.toFixed(2)}</BALAMT>\n` +
+    `          <DTASOF>${isoDateToOFX(baseline.date)}</DTASOF>\n` +
+    `        </LEDGERBAL>\n` +
+    `      </STMTRS>\n` +
+    `    </STMTTRNRS>\n`
+  );
+}
+
+function buildAccountStatement(
+  account: Account,
+  txs: Transaction[],
+  baseline: Baseline | null,
+  trnUid: number,
+  dtServer: string,
+): string {
+  const acctid = sanitizeAcctId(account.name);
   const sortedDates = txs.map((t) => t.date).sort();
   const dtStart =
     sortedDates.length > 0 ? isoDateToOFX(sortedDates[0]) : dtServer;
@@ -124,32 +168,65 @@ export function exportToOFX(
     })
     .join("\n");
   const balAmt = runningBalance.toFixed(2);
+  const tranList = stmttrns ? `${stmttrns}\n` : "";
 
-  const baselineStatement = baseline
-    ? `    <STMTTRNRS>\n` +
-      `      <TRNUID>0</TRNUID>\n` +
-      `      <STATUS>\n` +
-      `        <CODE>0</CODE>\n` +
-      `        <SEVERITY>INFO</SEVERITY>\n` +
-      `      </STATUS>\n` +
-      `      <STMTRS>\n` +
-      `        <CURDEF>USD</CURDEF>\n` +
-      `        <BANKACCTFROM>\n` +
-      `          <BANKID>000000000</BANKID>\n` +
-      `          <ACCTID>${BASELINE_ACCTID}</ACCTID>\n` +
-      `          <ACCTTYPE>CHECKING</ACCTTYPE>\n` +
-      `        </BANKACCTFROM>\n` +
-      `        <BANKTRANLIST>\n` +
-      `          <DTSTART>${isoDateToOFX(baseline.date)}</DTSTART>\n` +
-      `          <DTEND>${isoDateToOFX(baseline.date)}</DTEND>\n` +
-      `        </BANKTRANLIST>\n` +
-      `        <LEDGERBAL>\n` +
-      `          <BALAMT>${baseline.amount.toFixed(2)}</BALAMT>\n` +
-      `          <DTASOF>${isoDateToOFX(baseline.date)}</DTASOF>\n` +
-      `        </LEDGERBAL>\n` +
-      `      </STMTRS>\n` +
-      `    </STMTTRNRS>\n`
-    : "";
+  return (
+    `    <STMTTRNRS>\n` +
+    `      <TRNUID>${trnUid}</TRNUID>\n` +
+    `      <STATUS>\n` +
+    `        <CODE>0</CODE>\n` +
+    `        <SEVERITY>INFO</SEVERITY>\n` +
+    `      </STATUS>\n` +
+    `      <STMTRS>\n` +
+    `        <CURDEF>USD</CURDEF>\n` +
+    `        <BANKACCTFROM>\n` +
+    `          <BANKID>000000000</BANKID>\n` +
+    `          <ACCTID>${acctid}</ACCTID>\n` +
+    `          <ACCTTYPE>CHECKING</ACCTTYPE>\n` +
+    `        </BANKACCTFROM>\n` +
+    `        <BANKTRANLIST>\n` +
+    `          <DTSTART>${dtStart}</DTSTART>\n` +
+    `          <DTEND>${dtEnd}</DTEND>\n` +
+    `${tranList}` +
+    `        </BANKTRANLIST>\n` +
+    `        <LEDGERBAL>\n` +
+    `          <BALAMT>${balAmt}</BALAMT>\n` +
+    `          <DTASOF>${dtServer}</DTASOF>\n` +
+    `        </LEDGERBAL>\n` +
+    `      </STMTRS>\n` +
+    `    </STMTTRNRS>\n`
+  );
+}
+
+export function exportToOFX(
+  accounts: Account[],
+  txs: Transaction[],
+  baselines: Map<string, Baseline>,
+): string {
+  const now = new Date();
+  const dtServer = formatOFXDateTime(now);
+
+  const txsByAccount = new Map<string, Transaction[]>();
+  for (const tx of txs) {
+    const list = txsByAccount.get(tx.accountId) ?? [];
+    list.push(tx);
+    txsByAccount.set(tx.accountId, list);
+  }
+
+  const baselineStatements = accounts
+    .map((a) => {
+      const b = baselines.get(a.id);
+      return b ? buildBaselineStatement(a, b) : "";
+    })
+    .join("");
+
+  const accountStatements = accounts
+    .map((a, i) => {
+      const accountTxs = txsByAccount.get(a.id) ?? [];
+      const baseline = baselines.get(a.id) ?? null;
+      return buildAccountStatement(a, accountTxs, baseline, i + 1, dtServer);
+    })
+    .join("");
 
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -166,31 +243,8 @@ export function exportToOFX(
     `    </SONRS>\n` +
     `  </SIGNONMSGSRSV1>\n` +
     `  <BANKMSGSRSV1>\n` +
-    baselineStatement +
-    `    <STMTTRNRS>\n` +
-    `      <TRNUID>1</TRNUID>\n` +
-    `      <STATUS>\n` +
-    `        <CODE>0</CODE>\n` +
-    `        <SEVERITY>INFO</SEVERITY>\n` +
-    `      </STATUS>\n` +
-    `      <STMTRS>\n` +
-    `        <CURDEF>USD</CURDEF>\n` +
-    `        <BANKACCTFROM>\n` +
-    `          <BANKID>000000000</BANKID>\n` +
-    `          <ACCTID>finances</ACCTID>\n` +
-    `          <ACCTTYPE>CHECKING</ACCTTYPE>\n` +
-    `        </BANKACCTFROM>\n` +
-    `        <BANKTRANLIST>\n` +
-    `          <DTSTART>${dtStart}</DTSTART>\n` +
-    `          <DTEND>${dtEnd}</DTEND>\n` +
-    `${stmttrns}\n` +
-    `        </BANKTRANLIST>\n` +
-    `        <LEDGERBAL>\n` +
-    `          <BALAMT>${balAmt}</BALAMT>\n` +
-    `          <DTASOF>${dtServer}</DTASOF>\n` +
-    `        </LEDGERBAL>\n` +
-    `      </STMTRS>\n` +
-    `    </STMTTRNRS>\n` +
+    baselineStatements +
+    accountStatements +
     `  </BANKMSGSRSV1>\n` +
     `</OFX>\n`
   );
@@ -204,6 +258,25 @@ function extractField(block: string, tag: string): string | undefined {
   return value || undefined;
 }
 
+function classifyAcctId(
+  acctid: string | undefined,
+): { role: "transactions" | "baseline"; account: ParsedOFXAccount } {
+  if (!acctid || acctid === LEGACY_ACCTID) {
+    return { role: "transactions", account: { kind: "legacy" } };
+  }
+  if (acctid === LEGACY_BASELINE_ACCTID) {
+    return { role: "baseline", account: { kind: "legacy" } };
+  }
+  if (acctid.toLowerCase().startsWith(BASELINE_ACCTID_PREFIX)) {
+    const name = acctid.slice(BASELINE_ACCTID_PREFIX.length).trim();
+    return {
+      role: "baseline",
+      account: name ? { kind: "named", name } : { kind: "legacy" },
+    };
+  }
+  return { role: "transactions", account: { kind: "named", name: acctid } };
+}
+
 export function parseOFX(text: string): OFXParseResult {
   const ofxStart = text.search(/<OFX[\s>]/i);
   if (ofxStart === -1) {
@@ -212,58 +285,77 @@ export function parseOFX(text: string): OFXParseResult {
   const body = text.slice(ofxStart);
 
   const transactions: ParsedOFXTransaction[] = [];
-  const blockRegex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = blockRegex.exec(body)) !== null) {
-    const block = match[1];
-    const fitid = extractField(block, "FITID");
-    const amountStr = extractField(block, "TRNAMT");
-    const dtposted = extractField(block, "DTPOSTED");
-    const trntype = extractField(block, "TRNTYPE") ?? "OTHER";
-    const name = extractField(block, "NAME");
-    const memo = extractField(block, "MEMO");
-    const category = extractField(block, "CATEGORY");
+  const baselines: ParsedOFXBaseline[] = [];
 
-    if (!fitid || !amountStr || !dtposted) continue;
-    const amount = parseFloat(amountStr);
-    if (!isFinite(amount)) continue;
-    const date = ofxDateToISO(dtposted);
-    if (!date) continue;
-
-    transactions.push({
-      fitid,
-      trntype,
-      amount,
-      date,
-      name,
-      memo,
-      category,
-    });
-  }
-
-  let baseline: ParsedOFXBaseline | null = null;
   const stmtBlockRegex = /<STMTTRNRS>([\s\S]*?)<\/STMTTRNRS>/gi;
+  const stmtBlocks: string[] = [];
   let stmtMatch: RegExpExecArray | null;
   while ((stmtMatch = stmtBlockRegex.exec(body)) !== null) {
-    const block = stmtMatch[1];
-    const acctid = extractField(block, "ACCTID");
-    if (acctid !== BASELINE_ACCTID) continue;
-    const balAmtStr = extractField(block, "BALAMT");
-    const dtAsOf = extractField(block, "DTASOF");
-    if (!balAmtStr || !dtAsOf) continue;
-    const amount = parseFloat(balAmtStr);
-    if (!isFinite(amount)) continue;
-    const date = ofxDateToISO(dtAsOf);
-    if (!date) continue;
-    baseline = { amount, date };
-    break;
+    stmtBlocks.push(stmtMatch[1]);
   }
 
-  if (transactions.length === 0 && !baseline) {
+  const txStatementCount = stmtBlocks.filter((block) => {
+    const acctid = extractField(block, "ACCTID");
+    return classifyAcctId(acctid).role === "transactions";
+  }).length;
+
+  for (const block of stmtBlocks) {
+    const acctid = extractField(block, "ACCTID");
+    const { role, account: parsedAccount } = classifyAcctId(acctid);
+
+    if (role === "baseline") {
+      const balAmtStr = extractField(block, "BALAMT");
+      const dtAsOf = extractField(block, "DTASOF");
+      if (!balAmtStr || !dtAsOf) continue;
+      const amount = parseFloat(balAmtStr);
+      if (!isFinite(amount)) continue;
+      const date = ofxDateToISO(dtAsOf);
+      if (!date) continue;
+      baselines.push({ amount, date, account: parsedAccount });
+      continue;
+    }
+
+    const account: ParsedOFXAccount =
+      txStatementCount === 1 && parsedAccount.kind === "legacy"
+        ? { kind: "destination" }
+        : parsedAccount;
+
+    const txBlockRegex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
+    let txMatch: RegExpExecArray | null;
+    while ((txMatch = txBlockRegex.exec(block)) !== null) {
+      const txBlock = txMatch[1];
+      const fitid = extractField(txBlock, "FITID");
+      const amountStr = extractField(txBlock, "TRNAMT");
+      const dtposted = extractField(txBlock, "DTPOSTED");
+      const trntype = extractField(txBlock, "TRNTYPE") ?? "OTHER";
+      const name = extractField(txBlock, "NAME");
+      const memo = extractField(txBlock, "MEMO");
+      const category = extractField(txBlock, "CATEGORY");
+
+      if (!fitid || !amountStr || !dtposted) continue;
+      const amount = parseFloat(amountStr);
+      if (!isFinite(amount)) continue;
+      const date = ofxDateToISO(dtposted);
+      if (!date) continue;
+
+      transactions.push({
+        fitid,
+        trntype,
+        amount,
+        date,
+        name,
+        memo,
+        category,
+        account,
+      });
+    }
+  }
+
+  if (transactions.length === 0 && baselines.length === 0) {
     return {
       ok: false,
       error: "No <STMTTRN> entries or baseline found in the OFX file.",
     };
   }
-  return { ok: true, transactions, baseline };
+  return { ok: true, transactions, baselines };
 }

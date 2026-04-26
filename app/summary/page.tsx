@@ -23,18 +23,36 @@ const TX_PAGE_SIZE = 20;
 const MA_WINDOWS = [7, 14, 30, 90] as const;
 type MaWindow = (typeof MA_WINDOWS)[number];
 import {
+  Account,
   Baseline,
   Transaction,
   UNCATEGORIZED_LABEL,
+  aggregateBaseline,
   formatAmount,
   summarize,
-  useBaseline,
-  useTransactions,
+  useAccounts,
+  useBaselines,
+  useFilteredTransactions,
+  useSelectedAccountId,
 } from "../lib/transactions";
 
 export default function SummaryPage() {
-  const txs = useTransactions();
-  const baseline = useBaseline();
+  const accounts = useAccounts();
+  const selectedAccountId = useSelectedAccountId();
+  const txs = useFilteredTransactions();
+  const baselines = useBaselines();
+  const baseline = useMemo(() => {
+    if (selectedAccountId) return baselines.get(selectedAccountId) ?? null;
+    return aggregateBaseline(
+      baselines,
+      accounts.map((a) => a.id),
+    );
+  }, [baselines, selectedAccountId, accounts]);
+  const accountById = useMemo(() => {
+    const m = new Map<string, Account>();
+    for (const a of accounts) m.set(a.id, a);
+    return m;
+  }, [accounts]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [maWindow, setMaWindow] = useState<MaWindow>(30);
   const [selection, setSelection] = useState<[string, string] | null>(null);
@@ -266,6 +284,8 @@ export default function SummaryPage() {
                 key={activeCategory ?? "all"}
                 label={activeCategory ?? "All transactions"}
                 transactions={sectionTransactions}
+                showAccount={selectedAccountId === null}
+                accountById={accountById}
               />
             </div>
           ) : empty ? (
@@ -375,9 +395,13 @@ function CategoryColumn({
 function TransactionsList({
   label,
   transactions,
+  showAccount,
+  accountById,
 }: {
   label: string;
   transactions: Transaction[];
+  showAccount: boolean;
+  accountById: Map<string, Account>;
 }) {
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(transactions.length / TX_PAGE_SIZE));
@@ -435,9 +459,9 @@ function TransactionsList({
                 >
                   {tx.note || "No note"}
                 </p>
-                {tx.account ? (
+                {showAccount ? (
                   <p className="mt-1 text-xs text-mc-gray">
-                    Account {tx.account}
+                    Account {accountById.get(tx.accountId)?.name ?? "—"}
                   </p>
                 ) : null}
               </div>

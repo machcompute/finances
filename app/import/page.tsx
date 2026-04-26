@@ -19,9 +19,15 @@ import {
   UNCATEGORIZED_LABEL,
   addTransactionsBatch,
   formatAmount,
+  getOrCreateAccountByName,
+  pruneEmptySeededDefault,
   setBaseline,
+  useAccounts,
   useCategories,
+  useSelectedAccountId,
 } from "../lib/transactions";
+
+const NEW_ACCOUNT_OPTION = "__new__";
 
 type AmountMode = "single" | "debit-credit";
 type AnchorKind = "none" | "initial" | "final";
@@ -48,18 +54,35 @@ type DerivedRow = {
   amount: number | null;
   kind: TransactionKind | null;
   category: string | undefined;
-  account: string | undefined;
+  accountName: string;
   errors: string[];
 };
 
 export default function ImportPage() {
   const categories = useCategories();
+  const accounts = useAccounts();
+  const selectedAccountId = useSelectedAccountId();
 
   const [parsed, setParsed] = useState<ParsedCSV | null>(null);
   const [fileName, setFileName] = useState<string>("");
   const [step, setStep] = useState<"upload" | "map" | "confirm">("upload");
   const [mapping, setMapping] = useState<Mapping>(() => emptyMapping());
-  const [defaultAccount, setDefaultAccount] = useState("");
+  const [destinationOverride, setDestinationOverride] = useState<string | null>(
+    null,
+  );
+  const [newAccountName, setNewAccountName] = useState("");
+
+  const destinationAccountId = useMemo(() => {
+    if (destinationOverride === NEW_ACCOUNT_OPTION) return NEW_ACCOUNT_OPTION;
+    if (
+      destinationOverride &&
+      accounts.some((a) => a.id === destinationOverride)
+    ) {
+      return destinationOverride;
+    }
+    return selectedAccountId ?? accounts[0]?.id ?? "";
+  }, [destinationOverride, selectedAccountId, accounts]);
+  const setDestinationAccountId = setDestinationOverride;
   const [anchorKind, setAnchorKind] = useState<AnchorKind>("none");
   const [anchorAmount, setAnchorAmount] = useState("");
   const [anchorDate, setAnchorDate] = useState("");
@@ -76,7 +99,8 @@ export default function ImportPage() {
     setFileName("");
     setStep("upload");
     setMapping(emptyMapping());
-    setDefaultAccount("");
+    setDestinationOverride(null);
+    setNewAccountName("");
     setAnchorKind("none");
     setAnchorAmount("");
     setAnchorDate("");
@@ -138,6 +162,13 @@ export default function ImportPage() {
     if (file) await handleFile(file);
   }
 
+  const destinationName = useMemo(() => {
+    if (destinationAccountId === NEW_ACCOUNT_OPTION) {
+      return newAccountName.trim();
+    }
+    return accounts.find((a) => a.id === destinationAccountId)?.name ?? "";
+  }, [destinationAccountId, newAccountName, accounts]);
+
   const derived: DerivedRow[] = useMemo(() => {
     if (!parsed) return [];
     return parsed.rows.map((row, index) =>
@@ -146,11 +177,11 @@ export default function ImportPage() {
         index,
         headers: parsed.headers,
         mapping,
-        defaultAccount,
+        defaultAccountName: destinationName,
         override: overrides[index],
       }),
     );
-  }, [parsed, mapping, defaultAccount, overrides]);
+  }, [parsed, mapping, destinationName, overrides]);
 
   const stats = useMemo(() => computeStats(derived), [derived]);
   const baseline = useMemo(
@@ -166,32 +197,58 @@ export default function ImportPage() {
 
   function commitImport() {
     if (!parsed) return;
+
+    const validRows = derived.filter((r) => r.errors.length === 0);
+    if (validRows.length === 0) {
+      setErrorMessage("Nothing to import — every row has errors.");
+      return;
+    }
+    if (!destinationName) {
+      setErrorMessage("Pick a destination account first.");
+      return;
+    }
+
+    const existingAccountIds = new Set(accounts.map((a) => a.id));
+    const accountIdByLcName = new Map<string, string>();
+    let newAccountCount = 0;
+    function resolveAccountId(name: string): string {
+      const lc = name.toLowerCase();
+      const cached = accountIdByLcName.get(lc);
+      if (cached) return cached;
+      const account = getOrCreateAccountByName(name);
+      accountIdByLcName.set(lc, account.id);
+      if (!existingAccountIds.has(account.id)) newAccountCount++;
+      return account.id;
+    }
+
     const drafts: Omit<Transaction, "id">[] = [];
-    for (const r of derived) {
-      if (r.errors.length > 0) continue;
+    let primaryAccountId = "";
+    for (const r of validRows) {
+      const accountId = resolveAccountId(r.accountName);
+      if (!primaryAccountId) primaryAccountId = accountId;
       drafts.push({
+        accountId,
         kind: r.kind!,
         amount: r.amount!,
         category: r.category,
         date: r.date!,
         note: r.description || undefined,
-        account: r.account,
       });
     }
 
-    if (drafts.length === 0) {
-      setErrorMessage("Nothing to import — every row has errors.");
-      return;
-    }
-
     const result = addTransactionsBatch(drafts);
+    if (newAccountCount > 0) pruneEmptySeededDefault();
     const parts = [
       `${result.added} added`,
       `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"}`,
     ];
-    if (defaultAccount) parts.push(`account "${defaultAccount}"`);
-    if (baseline) {
-      setBaseline(baseline.amount, baseline.date);
+    if (newAccountCount > 0) {
+      parts.push(
+        `${newAccountCount} new account${newAccountCount === 1 ? "" : "s"} created`,
+      );
+    }
+    if (baseline && primaryAccountId) {
+      setBaseline(primaryAccountId, baseline.amount, baseline.date);
       parts.push(
         `baseline ${baseline.amount.toFixed(2)} as of ${baseline.date}`,
       );
@@ -202,6 +259,7 @@ export default function ImportPage() {
     setFileName("");
     setMapping(emptyMapping());
     setOverrides({});
+    setNewAccountName("");
   }
 
   return (
@@ -265,8 +323,11 @@ export default function ImportPage() {
               mapping={mapping}
               setMapping={setMapping}
               derived={derived}
-              defaultAccount={defaultAccount}
-              setDefaultAccount={setDefaultAccount}
+              accounts={accounts}
+              destinationAccountId={destinationAccountId}
+              setDestinationAccountId={setDestinationAccountId}
+              newAccountName={newAccountName}
+              setNewAccountName={setNewAccountName}
               anchorKind={anchorKind}
               setAnchorKind={setAnchorKind}
               anchorAmount={anchorAmount}
@@ -275,7 +336,11 @@ export default function ImportPage() {
               setAnchorDate={setAnchorDate}
               onCancel={resetAll}
               onContinue={() => setStep("confirm")}
-              continueDisabled={!mappingReady(mapping) || stats.valid === 0}
+              continueDisabled={
+                !mappingReady(mapping) ||
+                stats.valid === 0 ||
+                !destinationName
+              }
             />
           )}
 
@@ -290,7 +355,7 @@ export default function ImportPage() {
               }
               onBack={() => setStep("map")}
               onCommit={commitImport}
-              defaultAccount={defaultAccount}
+              destinationName={destinationName}
             />
           )}
         </div>
@@ -343,10 +408,10 @@ function deriveRow(args: {
   index: number;
   headers: string[];
   mapping: Mapping;
-  defaultAccount: string;
+  defaultAccountName: string;
   override: string | undefined;
 }): DerivedRow {
-  const { row, index, headers, mapping, defaultAccount, override } = args;
+  const { row, index, headers, mapping, defaultAccountName, override } = args;
   const errors: string[] = [];
   const cellByHeader = (h: string): string => {
     if (!h) return "";
@@ -400,12 +465,13 @@ function deriveRow(args: {
     if (explicit) category = explicit;
   }
 
-  let account: string | undefined = undefined;
+  let accountName = "";
   if (mapping.account !== NONE && mapping.account) {
     const a = cellByHeader(mapping.account).trim();
-    if (a) account = a;
+    if (a) accountName = a;
   }
-  if (!account && defaultAccount) account = defaultAccount;
+  if (!accountName) accountName = defaultAccountName;
+  if (!accountName) errors.push("missing account");
 
   return {
     index,
@@ -414,7 +480,7 @@ function deriveRow(args: {
     amount,
     kind,
     category,
-    account,
+    accountName,
     errors,
   };
 }
@@ -582,8 +648,11 @@ function MapCard(props: {
   mapping: Mapping;
   setMapping: (m: Mapping) => void;
   derived: DerivedRow[];
-  defaultAccount: string;
-  setDefaultAccount: (v: string) => void;
+  accounts: { id: string; name: string }[];
+  destinationAccountId: string;
+  setDestinationAccountId: (v: string) => void;
+  newAccountName: string;
+  setNewAccountName: (v: string) => void;
   anchorKind: AnchorKind;
   setAnchorKind: (k: AnchorKind) => void;
   anchorAmount: string;
@@ -600,8 +669,11 @@ function MapCard(props: {
     mapping,
     setMapping,
     derived,
-    defaultAccount,
-    setDefaultAccount,
+    accounts,
+    destinationAccountId,
+    setDestinationAccountId,
+    newAccountName,
+    setNewAccountName,
     anchorKind,
     setAnchorKind,
     anchorAmount,
@@ -778,14 +850,34 @@ function MapCard(props: {
           Account &amp; balance anchor
         </h2>
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Default account">
-            <input
-              type="text"
-              value={defaultAccount}
-              onChange={(e) => setDefaultAccount(e.target.value)}
-              placeholder="e.g. Main Checking · 1234"
+          <Field label="Destination account">
+            <select
+              value={destinationAccountId}
+              onChange={(e) => setDestinationAccountId(e.target.value)}
               className={inputClass}
-            />
+            >
+              {accounts.length === 0 && <option value="">No accounts</option>}
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+              <option value={NEW_ACCOUNT_OPTION}>+ Create new…</option>
+            </select>
+            {destinationAccountId === NEW_ACCOUNT_OPTION && (
+              <input
+                type="text"
+                value={newAccountName}
+                onChange={(e) => setNewAccountName(e.target.value)}
+                placeholder="New account name"
+                className={`mt-2 ${inputClass}`}
+              />
+            )}
+            <p className="mt-2 text-xs text-mc-gray">
+              Rows fall back to this account when the account column is empty.
+              Account-column values that don&apos;t match an existing account
+              are auto-created on import.
+            </p>
           </Field>
           <Field label="Anchor">
             <div className="flex gap-2">
@@ -874,7 +966,7 @@ function ConfirmCard(props: {
   setOverride: (idx: number, cat: string) => void;
   onBack: () => void;
   onCommit: () => void;
-  defaultAccount: string;
+  destinationName: string;
 }) {
   const {
     derived,
@@ -884,7 +976,7 @@ function ConfirmCard(props: {
     setOverride,
     onBack,
     onCommit,
-    defaultAccount,
+    destinationName,
   } = props;
 
   const [confirmPage, setConfirmPage] = useState(1);
@@ -907,11 +999,13 @@ function ConfirmCard(props: {
         <p className="mt-2 text-sm text-mc-gray">
           {stats.valid} ready · {stats.invalid} skipped · {stats.categorized}{" "}
           categorized · {stats.uncategorized} uncategorized
-          {defaultAccount && (
+          {destinationName && (
             <>
               {" "}
-              · account{" "}
-              <span className="font-mono text-mc-dark/70">{defaultAccount}</span>
+              · default account{" "}
+              <span className="font-mono text-mc-dark/70">
+                {destinationName}
+              </span>
             </>
           )}
         </p>
@@ -1074,7 +1168,7 @@ function PreviewTable({
                   )}
                 </td>
                 <td className="py-2 text-mc-gray font-mono text-xs">
-                  {r.account ?? "—"}
+                  {r.accountName || "—"}
                 </td>
               </tr>
             );

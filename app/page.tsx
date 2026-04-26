@@ -15,8 +15,10 @@ import {
   formatAmount,
   importOFX,
   removeTransaction,
+  useAccounts,
   useCategories,
-  useTransactions,
+  useFilteredTransactions,
+  useSelectedAccountId,
 } from "./lib/transactions";
 
 function todayISO(): string {
@@ -24,8 +26,30 @@ function todayISO(): string {
 }
 
 export default function TransactionsPage() {
-  const txs = useTransactions();
+  const accounts = useAccounts();
+  const selectedAccountId = useSelectedAccountId();
+  const txs = useFilteredTransactions();
   const categories = useCategories();
+
+  const [destinationOverride, setDestinationOverride] = useState<string | null>(
+    null,
+  );
+  const destinationAccountId = useMemo(() => {
+    if (
+      destinationOverride &&
+      accounts.some((a) => a.id === destinationOverride)
+    ) {
+      return destinationOverride;
+    }
+    return selectedAccountId ?? accounts[0]?.id ?? "";
+  }, [destinationOverride, selectedAccountId, accounts]);
+  const setDestinationAccountId = setDestinationOverride;
+
+  const accountById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of accounts) m.set(a.id, a.name);
+    return m;
+  }, [accounts]);
 
   const [kind, setKind] = useState<TransactionKind>("expense");
   const [amount, setAmount] = useState("");
@@ -44,13 +68,27 @@ export default function TransactionsPage() {
   } | null>(null);
 
   function handleImportClick() {
+    if (!destinationAccountId) {
+      setImportMessage({
+        kind: "error",
+        text: "Pick a destination account first.",
+      });
+      return;
+    }
     fileInputRef.current?.click();
   }
 
   async function runImport(file: File) {
+    if (!destinationAccountId) {
+      setImportMessage({
+        kind: "error",
+        text: "Pick a destination account first.",
+      });
+      return;
+    }
     try {
       const text = await file.text();
-      const result = importOFX(text);
+      const result = importOFX(text, destinationAccountId);
       if (result.ok) {
         const parts = [
           `Imported ${result.added} new transaction${result.added === 1 ? "" : "s"}`,
@@ -65,8 +103,15 @@ export default function TransactionsPage() {
             `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"} added`,
           );
         }
-        if (result.baselineApplied) {
-          parts.push("baseline restored");
+        if (result.accountsCreated > 0) {
+          parts.push(
+            `${result.accountsCreated} new account${result.accountsCreated === 1 ? "" : "s"} created`,
+          );
+        }
+        if (result.baselinesApplied > 0) {
+          parts.push(
+            `${result.baselinesApplied} baseline${result.baselinesApplied === 1 ? "" : "s"} restored`,
+          );
         }
         setImportMessage({ kind: "ok", text: `${parts.join(", ")}.` });
       } else {
@@ -140,7 +185,9 @@ export default function TransactionsPage() {
     e.preventDefault();
     const parsed = parseFloat(amount);
     if (!isFinite(parsed) || parsed <= 0) return;
+    if (!destinationAccountId) return;
     addTransaction({
+      accountId: destinationAccountId,
       kind,
       amount: parsed,
       category: effectiveCategory || undefined,
@@ -182,7 +229,8 @@ export default function TransactionsPage() {
               Track Your <span className="text-mc-lavender">Money</span>
             </h1>
             <p className="mt-6 text-lg text-mc-gray leading-relaxed max-w-lg">
-              Log income and expenses. Download your data as OFX to keep it.
+              Log income and expenses across as many accounts as you like.
+              Download your data as OFX to keep it.
             </p>
           </div>
           <div className="flex-1 w-full max-w-xl lg:max-w-none">
@@ -223,6 +271,26 @@ export default function TransactionsPage() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
+                    Account
+                  </span>
+                  <select
+                    required
+                    value={destinationAccountId}
+                    onChange={(e) => setDestinationAccountId(e.target.value)}
+                    className={`mt-2 ${inputClass}`}
+                  >
+                    {accounts.length === 0 && (
+                      <option value="">No accounts</option>
+                    )}
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
                     Amount
@@ -292,7 +360,8 @@ export default function TransactionsPage() {
               <button
                 type="submit"
                 form="add-transaction-form"
-                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors"
+                disabled={!destinationAccountId}
+                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Add transaction
               </button>
@@ -315,14 +384,15 @@ export default function TransactionsPage() {
                 Transactions
               </h2>
               <p className="mt-3 text-mc-gray text-lg max-w-2xl">
-                Every entry, newest first.
+                {selectedAccountId
+                  ? `${accountById.get(selectedAccountId) ?? "—"} · newest first.`
+                  : "Every entry across all accounts, newest first."}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => downloadOFX()}
-                disabled={sorted.length === 0}
                 className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Download OFX
@@ -330,7 +400,11 @@ export default function TransactionsPage() {
               <button
                 type="button"
                 onClick={handleImportClick}
-                title="Or drop a file anywhere on the page"
+                title={`Imports route to ${
+                  destinationAccountId
+                    ? accountById.get(destinationAccountId) ?? "—"
+                    : "—"
+                }. Or drop a file anywhere on the page.`}
                 className="text-sm font-medium px-4 py-2 rounded-full bg-mc-mint/20 text-mc-dark/80 border border-mc-mint/30 hover:bg-mc-mint/30 transition-colors"
               >
                 Upload OFX
@@ -401,6 +475,11 @@ export default function TransactionsPage() {
                         >
                           {tx.kind}
                         </span>
+                        {selectedAccountId === null && (
+                          <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-mc-dark/[0.05] text-mc-dark/70">
+                            {accountById.get(tx.accountId) ?? "—"}
+                          </span>
+                        )}
                       </div>
                       {tx.note && (
                         <p className="mt-1 text-sm text-mc-gray truncate">
