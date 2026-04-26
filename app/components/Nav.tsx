@@ -12,7 +12,7 @@ export function Nav() {
   return (
     <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-mc-gray/15">
       <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
-        <Link href="/" className="flex items-center gap-3">
+        <a href="https://machcomputing.com" className="flex items-center gap-3">
           <Image src="/logo.png" alt="MACH COMPUTING" width={36} height={36} />
           <Image
             src="/text_logo.png"
@@ -21,7 +21,7 @@ export function Nav() {
             height={20}
             className="hidden sm:block"
           />
-        </Link>
+        </a>
         <div className="hidden lg:flex items-center gap-8">
           {NAV_LINKS.map((link) => (
             <Link
