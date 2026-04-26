@@ -32,12 +32,6 @@ export function Nav() {
               {link.label}
             </Link>
           ))}
-          <a
-            href="https://machcomputing.com"
-            className="text-sm font-medium text-mc-gray/60 hover:text-mc-dark transition-colors"
-          >
-            ← Home
-          </a>
         </div>
       </div>
     </nav>
