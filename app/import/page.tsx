@@ -352,7 +352,10 @@ export default function ImportPage() {
               anchorDate={anchorDate}
               setAnchorDate={setAnchorDate}
               onCancel={resetAll}
-              onContinue={() => setStep("confirm")}
+              onContinue={() => {
+                setStep("confirm");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
               continueDisabled={
                 !mappingReady(mapping) ||
                 stats.valid === 0 ||

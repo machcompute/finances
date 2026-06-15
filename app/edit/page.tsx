@@ -10,6 +10,7 @@ import {
 } from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { Slider } from "../components/ui/slider";
 import { Checkbox } from "../components/ui/checkbox";
 import { Badge } from "../components/ui/badge";
@@ -50,6 +51,7 @@ export default function EditPage() {
   }, [accounts]);
   const showAccountColumn = selectedAccountId === null;
   const [filter, setFilter] = useState<Filter>("uncategorized");
+  const [search, setSearch] = useState("");
   const [resyncMessage, setResyncMessage] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [threshold, setThreshold] = useState(DEFAULT_SIMILARITY_THRESHOLD);
@@ -67,11 +69,18 @@ export default function EditPage() {
     const sorted = [...txs].sort((a, b) =>
       a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
     );
-    if (filter === "uncategorized") {
-      return sorted.filter((t) => !t.category || t.id === editingId);
-    }
-    return sorted;
-  }, [txs, filter, editingId]);
+    const byFilter =
+      filter === "uncategorized"
+        ? sorted.filter((t) => !t.category || t.id === editingId)
+        : sorted;
+    const query = search.trim().toLowerCase();
+    if (!query) return byFilter;
+    return byFilter.filter((t) =>
+      [t.note, t.category, accountById.get(t.accountId), t.date].some((v) =>
+        v?.toLowerCase().includes(query),
+      ),
+    );
+  }, [txs, filter, editingId, search, accountById]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -118,8 +127,9 @@ export default function EditPage() {
             Edit <span className="text-mc-lavender">categories</span>
           </h1>
           <p className="mt-6 text-lg text-mc-gray leading-relaxed max-w-lg">
-            Reassign categories one row at a time, or let Levenshtein matching
-            do it in bulk.
+            Change a transaction&apos;s category one at a time, or let us
+            auto-sort the rest by matching them to similar ones you&apos;ve
+            already labeled.
           </p>
           <div className="mt-8">
             <Link
@@ -166,10 +176,10 @@ export default function EditPage() {
                 variant="outline"
                 onClick={handleResync}
                 disabled={uncategorizedCount === 0}
-                title="Run Levenshtein matching against existing categorized transactions"
+                title="Auto-match uncategorized transactions to categories you've already used"
                 className="text-sm font-medium px-4 py-2 h-auto rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Re-sync uncategorized
+                Apply all suggestions
               </Button>
             </div>
           </div>
@@ -193,11 +203,23 @@ export default function EditPage() {
           )}
 
           <div className="mt-12">
+            <Input
+              type="search"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search transactions…"
+              className="mb-4 max-w-xs"
+            />
             {visible.length === 0 ? (
               <p className="text-mc-gray">
-                {filter === "uncategorized"
-                  ? "Nothing uncategorized — everything has a category."
-                  : "No transactions yet."}
+                {search.trim()
+                  ? "No transactions match your search."
+                  : filter === "uncategorized"
+                    ? "Nothing uncategorized — everything has a category."
+                    : "No transactions yet."}
               </p>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-mc-gray/15 bg-white">
@@ -290,11 +312,13 @@ export default function EditPage() {
             />
           </div>
 
-          <p className="mt-6 text-xs text-mc-gray">
-            Type a new category name to create it on the fly. Existing
-            categories from other transactions of the same kind appear as
-            suggestions.
-          </p>
+          {visible.length > 0 && (
+            <p className="mt-6 text-xs text-mc-gray">
+              Type a new category name to create it on the fly. Existing
+              categories from other transactions of the same kind appear as
+              suggestions.
+            </p>
+          )}
         </div>
       </section>
 
@@ -326,7 +350,7 @@ function ResyncPreview({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h3 className="text-base font-semibold text-mc-dark">
-            Re-sync preview
+            Suggestions
           </h3>
           <p className="mt-1 text-sm text-mc-gray">
             {accepted} accepted · {proposalMatches - accepted} skipped ·{" "}
