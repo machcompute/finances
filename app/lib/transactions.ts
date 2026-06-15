@@ -8,6 +8,7 @@ export type Account = {
   id: string;
   name: string;
   color?: string;
+  description?: string;
 };
 
 export type Transaction = {
@@ -141,16 +142,38 @@ export function setSelectedAccountId(id: string | null): void {
   commitSelectedAccount(id);
 }
 
-export function addAccount(name: string, color?: string): Account {
+export function addAccount(
+  name: string,
+  color?: string,
+  description?: string,
+): Account {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Account name is required.");
   const existing = accountStore.find(
     (a) => a.name.toLowerCase() === trimmed.toLowerCase(),
   );
   if (existing) return existing;
-  const account: Account = { id: freshId(), name: trimmed, color };
+  const account: Account = {
+    id: freshId(),
+    name: trimmed,
+    color,
+    description: description?.trim() || undefined,
+  };
   commitAccounts([...accountStore, account]);
   return account;
+}
+
+export function setAccountDescription(id: string, description: string): void {
+  const trimmed = description.trim();
+  let changed = false;
+  const next = accountStore.map((a) => {
+    if (a.id !== id) return a;
+    const value = trimmed || undefined;
+    if (a.description === value) return a;
+    changed = true;
+    return { ...a, description: value };
+  });
+  if (changed) commitAccounts(next);
 }
 
 export function getOrCreateAccountByName(name: string): Account {
@@ -388,7 +411,11 @@ export function importOFX(
     const lc = parsedAccount.name.toLowerCase();
     const existing = accountByLcName.get(lc);
     if (existing) return existing.id;
-    const created = addAccount(parsedAccount.name);
+    const created = addAccount(
+      parsedAccount.name,
+      undefined,
+      parsedAccount.description,
+    );
     accountByLcName.set(lc, created);
     return created.id;
   }

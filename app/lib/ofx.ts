@@ -6,7 +6,7 @@ import {
 } from "./transactions";
 
 export type ParsedOFXAccount =
-  | { kind: "named"; name: string }
+  | { kind: "named"; name: string; description?: string }
   | { kind: "legacy" }
   | { kind: "destination" };
 
@@ -129,6 +129,9 @@ function buildAccountStatement(
   dtServer: string,
 ): string {
   const acctid = sanitizeAcctId(account.name);
+  const descLine = account.description
+    ? `\n          <DESC>${escapeXML(account.description)}</DESC>`
+    : "";
   const sortedDates = txs.map((t) => t.date).sort();
   const dtStart =
     sortedDates.length > 0 ? isoDateToOFX(sortedDates[0]) : dtServer;
@@ -182,7 +185,7 @@ function buildAccountStatement(
     `        <BANKACCTFROM>\n` +
     `          <BANKID>000000000</BANKID>\n` +
     `          <ACCTID>${acctid}</ACCTID>\n` +
-    `          <ACCTTYPE>CHECKING</ACCTTYPE>\n` +
+    `          <ACCTTYPE>CHECKING</ACCTTYPE>${descLine}\n` +
     `        </BANKACCTFROM>\n` +
     `        <BANKTRANLIST>\n` +
     `          <DTSTART>${dtStart}</DTSTART>\n` +
@@ -302,6 +305,9 @@ export function parseOFX(text: string): OFXParseResult {
   for (const block of stmtBlocks) {
     const acctid = extractField(block, "ACCTID");
     const { role, account: parsedAccount } = classifyAcctId(acctid);
+    if (parsedAccount.kind === "named") {
+      parsedAccount.description = extractField(block, "DESC");
+    }
 
     if (role === "baseline") {
       const balAmtStr = extractField(block, "BALAMT");

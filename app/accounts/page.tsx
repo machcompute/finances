@@ -13,6 +13,7 @@ import {
   deleteAccount,
   formatAmount,
   renameAccount,
+  setAccountDescription,
   setBaseline,
   setSelectedAccountId,
   useAccounts,
@@ -43,13 +44,15 @@ export default function AccountsPage() {
   }, [accounts, baselines, txs]);
 
   const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const name = newName.trim();
     if (!name) return;
-    addAccount(name);
+    addAccount(name, undefined, newDescription);
     setNewName("");
+    setNewDescription("");
   }
 
   const inputClass =
@@ -94,6 +97,18 @@ export default function AccountsPage() {
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. Savings"
+                className={`mt-2 h-auto px-3 py-2 ${inputClass}`}
+              />
+            </label>
+            <label className="flex-1 min-w-[220px]">
+              <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
+                Description
+              </span>
+              <Input
+                type="text"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                placeholder="Optional"
                 className={`mt-2 h-auto px-3 py-2 ${inputClass}`}
               />
             </label>
@@ -144,6 +159,9 @@ function AccountCard({
 }) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(account.name);
+  const [draftDescription, setDraftDescription] = useState(
+    account.description ?? "",
+  );
   const [baselineAmount, setBaselineAmount] = useState(
     baseline ? baseline.amount.toString() : "",
   );
@@ -156,6 +174,11 @@ function AccountCard({
     if (trimmed && trimmed !== account.name) renameAccount(account.id, trimmed);
     else setDraftName(account.name);
     setEditingName(false);
+  }
+
+  function commitDescription() {
+    if (draftDescription.trim() !== (account.description ?? ""))
+      setAccountDescription(account.id, draftDescription);
   }
 
   function handleSaveBaseline() {
@@ -234,6 +257,17 @@ function AccountCard({
             {count} transaction{count === 1 ? "" : "s"}
             {isSelected && " · currently selected"}
           </p>
+          <Input
+            type="text"
+            value={draftDescription}
+            onChange={(e) => setDraftDescription(e.target.value)}
+            onBlur={commitDescription}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            placeholder="Add a description…"
+            className={`mt-3 ${inputClass}`}
+          />
         </div>
         <div className="text-right">
           <p className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
