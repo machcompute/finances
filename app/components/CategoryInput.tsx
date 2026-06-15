@@ -1,5 +1,7 @@
 "use client";
 
+import { Input } from "./ui/input";
+
 type Props = {
   value: string;
   onChange: (next: string) => void;
@@ -22,7 +24,7 @@ export function CategoryInput({
   onBlur,
 }: Props) {
   return (
-    <input
+    <Input
       type="text"
       list={listId}
       value={value}

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
+import { Button } from "@/app/components/ui/button";
+import { Input } from "@/app/components/ui/input";
 import {
   Account,
   addAccount,
@@ -51,7 +53,7 @@ export default function AccountsPage() {
   }
 
   const inputClass =
-    "w-full rounded-md border border-mc-gray/15 bg-white px-3 py-2 text-sm text-mc-dark placeholder:text-mc-gray/60 focus:outline-none focus:border-mc-lavender/60 transition-colors";
+    "w-full border-mc-gray/15 bg-white text-sm text-mc-dark placeholder:text-mc-gray/60 focus-visible:border-mc-lavender/60 focus-visible:ring-0";
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -87,21 +89,21 @@ export default function AccountsPage() {
               <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
                 New account
               </span>
-              <input
+              <Input
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. Savings"
-                className={`mt-2 ${inputClass}`}
+                className={`mt-2 h-auto px-3 py-2 ${inputClass}`}
               />
             </label>
-            <button
+            <Button
               type="submit"
               disabled={!newName.trim()}
-              className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded-full px-6 py-3 h-auto text-sm bg-mc-dark text-white hover:bg-mc-dark/85"
             >
               Add
-            </button>
+            </Button>
           </form>
 
           <div className="space-y-4">
@@ -179,7 +181,7 @@ function AccountCard({
   }
 
   const inputClass =
-    "w-full rounded-md border border-mc-gray/15 bg-white px-3 py-2 text-sm text-mc-dark placeholder:text-mc-gray/60 focus:outline-none focus:border-mc-lavender/60 transition-colors";
+    "w-full h-auto px-3 py-2 border-mc-gray/15 bg-white text-sm text-mc-dark placeholder:text-mc-gray/60 focus-visible:border-mc-lavender/60 focus-visible:ring-0";
   const balanceClass = balance >= 0 ? "text-mc-dark" : "text-mc-lavender";
 
   return (
@@ -187,7 +189,7 @@ function AccountCard({
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex-1 min-w-[220px]">
           {editingName ? (
-            <input
+            <Input
               type="text"
               autoFocus
               value={draftName}
@@ -204,27 +206,28 @@ function AccountCard({
             />
           ) : (
             <div className="flex items-center gap-2 flex-wrap">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => {
                   setDraftName(account.name);
                   setEditingName(true);
                 }}
                 title="Click to rename"
-                className="text-xl font-semibold text-mc-dark hover:text-mc-lavender transition-colors text-left"
+                className="h-auto p-0 text-xl font-semibold text-mc-dark hover:bg-transparent hover:text-mc-lavender text-left"
               >
                 {account.name}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => {
                   setDraftName(account.name);
                   setEditingName(true);
                 }}
-                className="text-xs font-medium px-2 py-0.5 rounded-full bg-mc-lavender/15 text-mc-dark/70 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
+                className="h-auto text-xs font-medium px-2 py-0.5 rounded-full bg-mc-lavender/15 text-mc-dark/70 border-mc-lavender/20 hover:bg-mc-lavender/25"
               >
                 Rename
-              </button>
+              </Button>
             </div>
           )}
           <p className="mt-1 text-sm text-mc-gray">
@@ -248,7 +251,7 @@ function AccountCard({
           <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
             Baseline amount
           </span>
-          <input
+          <Input
             type="number"
             step="0.01"
             value={baselineAmount}
@@ -261,7 +264,7 @@ function AccountCard({
           <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
             As-of date
           </span>
-          <input
+          <Input
             type="date"
             value={baselineDate}
             onChange={(e) => setBaselineDate(e.target.value)}
@@ -271,41 +274,42 @@ function AccountCard({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <button
+        <Button
           type="button"
           onClick={handleSaveBaseline}
           disabled={!baselineAmount || !baselineDate}
-          className="text-sm font-medium px-4 py-2 rounded-full bg-mc-mint/30 text-mc-dark/80 border border-mc-mint/40 hover:bg-mc-mint/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="h-auto text-sm font-medium px-4 py-2 rounded-full bg-mc-mint/30 text-mc-dark/80 border-mc-mint/40 hover:bg-mc-mint/40"
         >
           Save baseline
-        </button>
+        </Button>
         {baseline && (
-          <button
+          <Button
             type="button"
             onClick={handleClearBaseline}
-            className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
+            className="h-auto text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/15 text-mc-dark/80 border-mc-lavender/20 hover:bg-mc-lavender/25"
           >
             Clear baseline
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
           onClick={() => setSelectedAccountId(account.id)}
           disabled={isSelected}
-          className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/10 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="h-auto text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/10 text-mc-dark/80 border-mc-lavender/20 hover:bg-mc-lavender/20"
         >
           Select
-        </button>
+        </Button>
         <span className="flex-1" />
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={handleDelete}
           disabled={isOnly}
           title={isOnly ? "At least one account must remain" : undefined}
-          className="text-sm font-medium px-4 py-2 rounded-full text-mc-gray hover:bg-mc-dark/[0.04] hover:text-mc-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="h-auto text-sm font-medium px-4 py-2 rounded-full text-mc-gray hover:bg-mc-dark/[0.04] hover:text-mc-dark"
         >
           Delete
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -9,6 +9,18 @@ import {
   CategoryInput,
 } from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
+import { Button } from "../components/ui/button";
+import { Slider } from "../components/ui/slider";
+import { Checkbox } from "../components/ui/checkbox";
+import { Badge } from "../components/ui/badge";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "../components/ui/table";
 import { DEFAULT_SIMILARITY_THRESHOLD } from "../lib/csv";
 import {
   UNCATEGORIZED_LABEL,
@@ -134,29 +146,31 @@ export default function EditPage() {
             <div className="flex flex-wrap gap-2">
               <div className="inline-flex rounded-full border border-mc-gray/15 p-0.5">
                 {(["uncategorized", "all"] as Filter[]).map((f) => (
-                  <button
+                  <Button
                     key={f}
                     type="button"
+                    variant="ghost"
                     onClick={() => setFilter(f)}
-                    className={`text-sm font-medium px-4 py-1.5 rounded-full capitalize transition-colors ${
+                    className={`text-sm font-medium px-4 py-1.5 h-auto rounded-full capitalize transition-colors ${
                       filter === f
-                        ? "bg-mc-dark text-white"
+                        ? "bg-mc-dark text-white hover:bg-mc-dark"
                         : "text-mc-gray hover:text-mc-dark"
                     }`}
                   >
                     {f}
-                  </button>
+                  </Button>
                 ))}
               </div>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={handleResync}
                 disabled={uncategorizedCount === 0}
                 title="Run Levenshtein matching against existing categorized transactions"
-                className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="text-sm font-medium px-4 py-2 h-auto rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Re-sync uncategorized
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -188,35 +202,36 @@ export default function EditPage() {
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-mc-gray/15 bg-white">
                 <CategoryDatalist id="all-cats" options={categories} />
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
-                      <th className="text-left py-3 px-4">Date</th>
-                      <th className="text-left py-3 px-4">Description</th>
-                      <th className="text-left py-3 px-4">Kind</th>
-                      <th className="text-right py-3 px-4">Amount</th>
-                      <th className="text-left py-3 px-4">Category</th>
+                <Table className="min-w-full text-sm">
+                  <TableHeader>
+                    <TableRow className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
+                      <TableHead className="text-left py-3 px-4">Date</TableHead>
+                      <TableHead className="text-left py-3 px-4">Description</TableHead>
+                      <TableHead className="text-left py-3 px-4">Kind</TableHead>
+                      <TableHead className="text-right py-3 px-4">Amount</TableHead>
+                      <TableHead className="text-left py-3 px-4">Category</TableHead>
                       {showAccountColumn && (
-                        <th className="text-left py-3 px-4">Account</th>
+                        <TableHead className="text-left py-3 px-4">Account</TableHead>
                       )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-mc-gray/10">
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="divide-y divide-mc-gray/10">
                     {pageItems.map((tx) => {
                       return (
-                        <tr key={tx.id}>
-                          <td className="py-3 px-4 font-mono text-mc-gray">
+                        <TableRow key={tx.id}>
+                          <TableCell className="py-3 px-4 font-mono text-mc-gray">
                             {tx.date}
-                          </td>
-                          <td className="py-3 px-4 text-mc-dark max-w-md">
+                          </TableCell>
+                          <TableCell className="py-3 px-4 text-mc-dark max-w-md">
                             <div className="truncate">
                               {tx.note ?? (
                                 <span className="text-mc-gray italic">—</span>
                               )}
                             </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
+                          </TableCell>
+                          <TableCell className="py-3 px-4">
+                            <Badge
+                              variant="secondary"
                               className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                                 tx.kind === "income"
                                   ? "bg-mc-mint/20 text-mc-dark/70"
@@ -224,13 +239,13 @@ export default function EditPage() {
                               }`}
                             >
                               {tx.kind}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono text-mc-dark">
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-3 px-4 text-right font-mono text-mc-dark">
                             {tx.kind === "income" ? "+" : "−"}
                             {formatAmount(tx.amount)}
-                          </td>
-                          <td className="py-3 px-4">
+                          </TableCell>
+                          <TableCell className="py-3 px-4">
                             <CategoryInput
                               value={tx.category ?? ""}
                               onChange={(v) =>
@@ -253,17 +268,17 @@ export default function EditPage() {
                                   : "border-mc-lavender/40 text-mc-gray italic"
                               }`}
                             />
-                          </td>
+                          </TableCell>
                           {showAccountColumn && (
-                            <td className="py-3 px-4 text-mc-gray font-mono text-xs">
+                            <TableCell className="py-3 px-4 text-mc-gray font-mono text-xs">
                               {accountById.get(tx.accountId) ?? "—"}
-                            </td>
+                            </TableCell>
                           )}
-                        </tr>
+                        </TableRow>
                       );
                     })}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
             )}
             <Pagination
@@ -322,14 +337,13 @@ function ResyncPreview({
           <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
             Threshold
           </span>
-          <input
-            type="range"
+          <Slider
             min={0}
             max={1}
             step={0.05}
             value={threshold}
-            onChange={(e) => setThreshold(parseFloat(e.target.value))}
-            className="w-40 accent-mc-lavender"
+            onValueChange={(v) => setThreshold(v as number)}
+            className="w-40"
           />
           <span className="text-sm font-mono text-mc-dark w-10 text-right">
             {threshold.toFixed(2)}
@@ -343,35 +357,35 @@ function ResyncPreview({
         </p>
       ) : (
         <div className="mt-4 max-h-64 overflow-y-auto rounded-lg border border-mc-gray/15 bg-white">
-          <table className="min-w-full text-sm">
-            <thead className="sticky top-0 bg-white">
-              <tr className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
-                <th className="py-2 px-3 w-8"></th>
-                <th className="text-left py-2 px-3">Description</th>
-                <th className="text-left py-2 px-3">Kind</th>
-                <th className="text-left py-2 px-3">Will become</th>
-                <th className="text-right py-2 px-3">Similarity</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-mc-gray/10">
+          <Table className="min-w-full text-sm">
+            <TableHeader className="sticky top-0 bg-white">
+              <TableRow className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
+                <TableHead className="py-2 px-3 w-8"></TableHead>
+                <TableHead className="text-left py-2 px-3">Description</TableHead>
+                <TableHead className="text-left py-2 px-3">Kind</TableHead>
+                <TableHead className="text-left py-2 px-3">Will become</TableHead>
+                <TableHead className="text-right py-2 px-3">Similarity</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className="divide-y divide-mc-gray/10">
               {matched.map((p) => {
                 const checked = !excludedIds.has(p.txId);
                 return (
-                <tr key={p.txId} className={checked ? "" : "opacity-50"}>
-                  <td className="py-2 px-3">
-                    <input
-                      type="checkbox"
+                <TableRow key={p.txId} className={checked ? "" : "opacity-50"}>
+                  <TableCell className="py-2 px-3">
+                    <Checkbox
                       checked={checked}
-                      onChange={() => toggleExclude(p.txId)}
+                      onCheckedChange={() => toggleExclude(p.txId)}
                       aria-label={`Apply suggestion for ${p.description || "row"}`}
                       className="accent-mc-lavender"
                     />
-                  </td>
-                  <td className="py-2 px-3 text-mc-dark max-w-md">
+                  </TableCell>
+                  <TableCell className="py-2 px-3 text-mc-dark max-w-md">
                     <div className="truncate">{p.description || "—"}</div>
-                  </td>
-                  <td className="py-2 px-3">
-                    <span
+                  </TableCell>
+                  <TableCell className="py-2 px-3">
+                    <Badge
+                      variant="secondary"
                       className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                         p.kind === "income"
                           ? "bg-mc-mint/20 text-mc-dark/70"
@@ -379,21 +393,21 @@ function ResyncPreview({
                       }`}
                     >
                       {p.kind}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-mc-dark/80">
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="py-2 px-3 text-mc-dark/80">
                     {p.suggestedCategory}
-                  </td>
-                  <td className="py-2 px-3 text-right font-mono text-mc-gray">
+                  </TableCell>
+                  <TableCell className="py-2 px-3 text-right font-mono text-mc-gray">
                     {p.similarity !== null
                       ? p.similarity.toFixed(2)
                       : "—"}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

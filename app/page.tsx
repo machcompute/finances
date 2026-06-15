@@ -6,6 +6,15 @@ import { Nav } from "./components/Nav";
 import { Footer } from "./components/Footer";
 import { CategoryDatalist, CategoryInput } from "./components/CategoryInput";
 import { Pagination } from "./components/Pagination";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "./components/ui/select";
 
 const PAGE_SIZE = 20;
 import {
@@ -246,28 +255,28 @@ export default function TransactionsPage() {
               className="mt-6 space-y-5"
             >
               <div className="flex gap-2">
-                <button
+                <Button
                   type="button"
                   onClick={() => selectKind("income")}
-                  className={`flex-1 text-sm font-medium px-4 py-2 rounded-full transition-colors ${
+                  className={`flex-1 text-sm font-medium px-4 py-2 h-auto rounded-full transition-colors ${
                     kind === "income"
-                      ? "bg-mc-mint/30 text-mc-dark border border-mc-mint/40"
-                      : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark"
+                      ? "bg-mc-mint/30 text-mc-dark border border-mc-mint/40 hover:bg-mc-mint/30"
+                      : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark hover:bg-transparent"
                   }`}
                 >
                   Income
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
                   onClick={() => selectKind("expense")}
-                  className={`flex-1 text-sm font-medium px-4 py-2 rounded-full transition-colors ${
+                  className={`flex-1 text-sm font-medium px-4 py-2 h-auto rounded-full transition-colors ${
                     kind === "expense"
-                      ? "bg-mc-lavender/15 text-mc-dark border border-mc-lavender/40"
-                      : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark"
+                      ? "bg-mc-lavender/15 text-mc-dark border border-mc-lavender/40 hover:bg-mc-lavender/15"
+                      : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark hover:bg-transparent"
                   }`}
                 >
                   Expense
-                </button>
+                </Button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -275,27 +284,28 @@ export default function TransactionsPage() {
                   <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
                     Account
                   </span>
-                  <select
-                    required
+                  <Select
                     value={destinationAccountId}
-                    onChange={(e) => setDestinationAccountId(e.target.value)}
-                    className={`mt-2 ${inputClass}`}
+                    onValueChange={(v) => setDestinationAccountId(v)}
+                    items={accounts.map((a) => ({ value: a.id, label: a.name }))}
                   >
-                    {accounts.length === 0 && (
-                      <option value="">No accounts</option>
-                    )}
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="w-full mt-2">
+                      <SelectValue placeholder="No accounts" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {accounts.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
                     Amount
                   </span>
-                  <input
+                  <Input
                     type="number"
                     inputMode="decimal"
                     step="0.01"
@@ -304,7 +314,7 @@ export default function TransactionsPage() {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.00"
-                    className={`mt-2 ${inputClass} font-mono`}
+                    className="mt-2 w-full text-mc-dark placeholder:text-mc-gray/60 focus:border-mc-lavender/60 font-mono"
                   />
                 </label>
                 <label className="block">
@@ -328,12 +338,12 @@ export default function TransactionsPage() {
                   <span className="text-xs font-semibold uppercase tracking-wider text-mc-gray">
                     Date
                   </span>
-                  <input
+                  <Input
                     type="date"
                     required
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
-                    className={`mt-2 ${inputClass} font-mono`}
+                    className="mt-2 w-full text-mc-dark placeholder:text-mc-gray/60 focus:border-mc-lavender/60 font-mono"
                   />
                 </label>
                 <label className="block">
@@ -343,12 +353,12 @@ export default function TransactionsPage() {
                       (optional)
                     </span>
                   </span>
-                  <input
+                  <Input
                     type="text"
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
                     placeholder="e.g. lunch with team"
-                    className={`mt-2 ${inputClass}`}
+                    className="mt-2 w-full text-mc-dark placeholder:text-mc-gray/60 focus:border-mc-lavender/60"
                   />
                 </label>
               </div>
@@ -357,14 +367,14 @@ export default function TransactionsPage() {
             </div>
 
             <div className="mt-6 flex flex-wrap gap-3">
-              <button
+              <Button
                 type="submit"
                 form="add-transaction-form"
                 disabled={!destinationAccountId}
-                className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="rounded-full px-6 py-3 h-auto text-sm"
               >
                 Add transaction
-              </button>
+              </Button>
               <Link
                 href="/summary"
                 className="inline-flex items-center px-6 py-3 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 font-medium text-sm hover:bg-mc-lavender/25 transition-colors"
@@ -390,14 +400,14 @@ export default function TransactionsPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button
+              <Button
                 type="button"
                 onClick={() => downloadOFX()}
-                className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="text-sm font-medium px-4 py-2 h-auto rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
               >
                 Download OFX
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={handleImportClick}
                 title={`Imports route to ${
@@ -405,17 +415,17 @@ export default function TransactionsPage() {
                     ? accountById.get(destinationAccountId) ?? "—"
                     : "—"
                 }. Or drop a file anywhere on the page.`}
-                className="text-sm font-medium px-4 py-2 rounded-full bg-mc-mint/20 text-mc-dark/80 border border-mc-mint/30 hover:bg-mc-mint/30 transition-colors"
+                className="text-sm font-medium px-4 py-2 h-auto rounded-full bg-mc-mint/20 text-mc-dark/80 border border-mc-mint/30 hover:bg-mc-mint/30 transition-colors"
               >
                 Upload OFX
-              </button>
+              </Button>
               <Link
                 href="/import"
                 className="text-sm font-medium px-4 py-2 rounded-full bg-mc-lime/30 text-mc-dark/80 border border-mc-lime/40 hover:bg-mc-lime/50 transition-colors"
               >
                 Import CSV &rarr;
               </Link>
-              <input
+              <Input
                 ref={fileInputRef}
                 type="file"
                 accept="application/x-ofx,.ofx,.qfx"
@@ -495,13 +505,14 @@ export default function TransactionsPage() {
                         {tx.kind === "income" ? "+" : "−"}
                         {formatAmount(tx.amount)}
                       </span>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
                         onClick={() => removeTransaction(tx.id)}
-                        className="text-xs font-medium px-2.5 py-1 rounded-full text-mc-gray hover:bg-mc-dark/[0.04] hover:text-mc-dark transition-colors"
+                        className="text-xs font-medium px-2.5 py-1 h-auto rounded-full text-mc-gray hover:bg-mc-dark/[0.04] hover:text-mc-dark transition-colors"
                       >
                         Remove
-                      </button>
+                      </Button>
                     </div>
                   </li>
                 ))}

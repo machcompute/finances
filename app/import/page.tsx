@@ -9,6 +9,23 @@ import {
   CategoryInput,
 } from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import { ParsedCSV, parseCSV } from "../lib/csv";
 
 const IMPORT_PAGE_SIZE = 20;
@@ -624,14 +641,14 @@ function UploadCard({
       <p className="mt-3 text-sm text-mc-gray">
         Drop a file anywhere on the page, or click below.
       </p>
-      <button
+      <Button
         type="button"
         onClick={() => fileInputRef.current?.click()}
-        className="mt-6 inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors"
+        className="mt-6 rounded-full px-6 py-3 h-auto text-sm bg-mc-dark text-white hover:bg-mc-dark/85"
       >
         Choose CSV file
-      </button>
-      <input
+      </Button>
+      <Input
         ref={fileInputRef}
         type="file"
         accept=".csv,text/csv"
@@ -686,21 +703,24 @@ function MapCard(props: {
   } = props;
 
   const inputClass =
-    "w-full rounded-md border border-mc-gray/15 bg-white px-3 py-2 text-sm text-mc-dark placeholder:text-mc-gray/60 focus:outline-none focus:border-mc-lavender/60 transition-colors";
+    "w-full text-mc-dark placeholder:text-mc-gray/60 focus-visible:border-mc-lavender/60";
+  const triggerClass =
+    "w-full text-mc-dark focus-visible:border-mc-lavender/60";
 
   const set = (patch: Partial<Mapping>) => setMapping({ ...mapping, ...patch });
 
-  const headerOptions = (allowNone: boolean) => (
-    <>
-      <option value="">— choose —</option>
-      {allowNone && <option value={NONE}>— none —</option>}
-      {parsed.headers.map((h) => (
-        <option key={h} value={h}>
-          {h}
-        </option>
-      ))}
-    </>
-  );
+  const headerItems = (allowNone: boolean) => [
+    { value: "", label: "— choose —" },
+    ...(allowNone ? [{ value: NONE, label: "— none —" }] : []),
+    ...parsed.headers.map((h) => ({ value: h, label: h })),
+  ];
+
+  const headerOptions = (allowNone: boolean) =>
+    headerItems(allowNone).map((it) => (
+      <SelectItem key={it.value} value={it.value}>
+        {it.label}
+      </SelectItem>
+    ));
 
   const [previewPage, setPreviewPage] = useState(1);
   const previewPageCount = Math.max(
@@ -726,121 +746,160 @@ function MapCard(props: {
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Date">
-            <select
+            <Select
               value={mapping.date}
-              onChange={(e) => set({ date: e.target.value })}
-              className={inputClass}
+              onValueChange={(v) => set({ date: v ?? "" })}
+              items={headerItems(false)}
             >
-              {headerOptions(false)}
-            </select>
-            <select
+              <SelectTrigger className={triggerClass}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>{headerOptions(false)}</SelectContent>
+            </Select>
+            <Select
               value={mapping.dateFormat}
-              onChange={(e) =>
-                set({ dateFormat: e.target.value as Mapping["dateFormat"] })
+              onValueChange={(v) =>
+                set({ dateFormat: (v ?? "auto") as Mapping["dateFormat"] })
               }
-              className={`mt-2 ${inputClass} font-mono`}
+              items={[
+                { value: "auto", label: "Auto detect" },
+                { value: "YYYY-MM-DD", label: "YYYY-MM-DD" },
+                { value: "DD/MM/YYYY", label: "DD/MM/YYYY" },
+                { value: "MM/DD/YYYY", label: "MM/DD/YYYY" },
+              ]}
             >
-              <option value="auto">Auto detect</option>
-              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-              <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-            </select>
+              <SelectTrigger className={`mt-2 ${triggerClass} font-mono`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto detect</SelectItem>
+                <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
+                <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
+                <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
 
           <Field label="Description">
-            <select
+            <Select
               value={mapping.description}
-              onChange={(e) => set({ description: e.target.value })}
-              className={inputClass}
+              onValueChange={(v) => set({ description: v ?? "" })}
+              items={headerItems(false)}
             >
-              {headerOptions(false)}
-            </select>
+              <SelectTrigger className={triggerClass}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>{headerOptions(false)}</SelectContent>
+            </Select>
           </Field>
 
           <Field label="Amount mode">
             <div className="flex gap-2">
-              <button
+              <Button
                 type="button"
                 onClick={() => set({ amountMode: "single" })}
-                className={`flex-1 text-sm font-medium px-3 py-2 rounded-full transition-colors ${
+                className={`flex-1 rounded-full px-3 py-2 h-auto text-sm ${
                   mapping.amountMode === "single"
-                    ? "bg-mc-mint/30 text-mc-dark border border-mc-mint/40"
-                    : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark"
+                    ? "bg-mc-mint/30 text-mc-dark border border-mc-mint/40 hover:bg-mc-mint/30"
+                    : "bg-transparent text-mc-gray border border-mc-gray/15 hover:bg-transparent hover:text-mc-dark"
                 }`}
               >
                 Signed
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => set({ amountMode: "debit-credit" })}
-                className={`flex-1 text-sm font-medium px-3 py-2 rounded-full transition-colors ${
+                className={`flex-1 rounded-full px-3 py-2 h-auto text-sm ${
                   mapping.amountMode === "debit-credit"
-                    ? "bg-mc-lavender/15 text-mc-dark border border-mc-lavender/40"
-                    : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark"
+                    ? "bg-mc-lavender/15 text-mc-dark border border-mc-lavender/40 hover:bg-mc-lavender/15"
+                    : "bg-transparent text-mc-gray border border-mc-gray/15 hover:bg-transparent hover:text-mc-dark"
                 }`}
               >
                 Debit + Credit
-              </button>
+              </Button>
             </div>
-            <select
+            <Select
               value={mapping.decimal}
-              onChange={(e) =>
-                set({ decimal: e.target.value as Mapping["decimal"] })
+              onValueChange={(v) =>
+                set({ decimal: (v ?? ".") as Mapping["decimal"] })
               }
-              className={`mt-2 ${inputClass} font-mono`}
+              items={[
+                { value: ".", label: "Decimal: ." },
+                { value: ",", label: "Decimal: ," },
+              ]}
             >
-              <option value=".">Decimal: .</option>
-              <option value=",">Decimal: ,</option>
-            </select>
+              <SelectTrigger className={`mt-2 ${triggerClass} font-mono`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value=".">Decimal: .</SelectItem>
+                <SelectItem value=",">Decimal: ,</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
 
           {mapping.amountMode === "single" ? (
             <Field label="Amount column">
-              <select
+              <Select
                 value={mapping.amount}
-                onChange={(e) => set({ amount: e.target.value })}
-                className={inputClass}
+                onValueChange={(v) => set({ amount: v ?? "" })}
+                items={headerItems(false)}
               >
-                {headerOptions(false)}
-              </select>
+                <SelectTrigger className={triggerClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>{headerOptions(false)}</SelectContent>
+              </Select>
             </Field>
           ) : (
             <Field label="Debit / Credit columns">
-              <select
+              <Select
                 value={mapping.debit}
-                onChange={(e) => set({ debit: e.target.value })}
-                className={inputClass}
+                onValueChange={(v) => set({ debit: v ?? "" })}
+                items={headerItems(true)}
               >
-                {headerOptions(true)}
-              </select>
-              <select
+                <SelectTrigger className={triggerClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>{headerOptions(true)}</SelectContent>
+              </Select>
+              <Select
                 value={mapping.credit}
-                onChange={(e) => set({ credit: e.target.value })}
-                className={`mt-2 ${inputClass}`}
+                onValueChange={(v) => set({ credit: v ?? "" })}
+                items={headerItems(true)}
               >
-                {headerOptions(true)}
-              </select>
+                <SelectTrigger className={`mt-2 ${triggerClass}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>{headerOptions(true)}</SelectContent>
+              </Select>
             </Field>
           )}
 
           <Field label="Category column (optional)">
-            <select
+            <Select
               value={mapping.category}
-              onChange={(e) => set({ category: e.target.value })}
-              className={inputClass}
+              onValueChange={(v) => set({ category: v ?? "" })}
+              items={headerItems(true)}
             >
-              {headerOptions(true)}
-            </select>
+              <SelectTrigger className={triggerClass}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>{headerOptions(true)}</SelectContent>
+            </Select>
           </Field>
 
           <Field label="Account column (optional)">
-            <select
+            <Select
               value={mapping.account}
-              onChange={(e) => set({ account: e.target.value })}
-              className={inputClass}
+              onValueChange={(v) => set({ account: v ?? "" })}
+              items={headerItems(true)}
             >
-              {headerOptions(true)}
-            </select>
+              <SelectTrigger className={triggerClass}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>{headerOptions(true)}</SelectContent>
+            </Select>
           </Field>
         </div>
       </div>
@@ -851,21 +910,36 @@ function MapCard(props: {
         </h2>
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Destination account">
-            <select
+            <Select
               value={destinationAccountId}
-              onChange={(e) => setDestinationAccountId(e.target.value)}
-              className={inputClass}
+              onValueChange={(v) => setDestinationAccountId(v ?? "")}
+              items={[
+                ...(accounts.length === 0
+                  ? [{ value: "", label: "No accounts" }]
+                  : []),
+                ...accounts.map((a) => ({ value: a.id, label: a.name })),
+                { value: NEW_ACCOUNT_OPTION, label: "+ Create new…" },
+              ]}
             >
-              {accounts.length === 0 && <option value="">No accounts</option>}
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-              <option value={NEW_ACCOUNT_OPTION}>+ Create new…</option>
-            </select>
+              <SelectTrigger className={triggerClass}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.length === 0 && (
+                  <SelectItem value="">No accounts</SelectItem>
+                )}
+                {accounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value={NEW_ACCOUNT_OPTION}>
+                  + Create new…
+                </SelectItem>
+              </SelectContent>
+            </Select>
             {destinationAccountId === NEW_ACCOUNT_OPTION && (
-              <input
+              <Input
                 type="text"
                 value={newAccountName}
                 onChange={(e) => setNewAccountName(e.target.value)}
@@ -882,25 +956,25 @@ function MapCard(props: {
           <Field label="Anchor">
             <div className="flex gap-2">
               {(["none", "initial", "final"] as AnchorKind[]).map((k) => (
-                <button
+                <Button
                   key={k}
                   type="button"
                   onClick={() => setAnchorKind(k)}
-                  className={`flex-1 text-sm font-medium px-3 py-2 rounded-full transition-colors capitalize ${
+                  className={`flex-1 rounded-full px-3 py-2 h-auto text-sm capitalize ${
                     anchorKind === k
-                      ? "bg-mc-lavender/15 text-mc-dark border border-mc-lavender/40"
-                      : "bg-transparent text-mc-gray border border-mc-gray/15 hover:text-mc-dark"
+                      ? "bg-mc-lavender/15 text-mc-dark border border-mc-lavender/40 hover:bg-mc-lavender/15"
+                      : "bg-transparent text-mc-gray border border-mc-gray/15 hover:bg-transparent hover:text-mc-dark"
                   }`}
                 >
                   {k}
-                </button>
+                </Button>
               ))}
             </div>
           </Field>
           {anchorKind !== "none" && (
             <>
               <Field label="Anchor amount">
-                <input
+                <Input
                   type="number"
                   step="0.01"
                   value={anchorAmount}
@@ -910,7 +984,7 @@ function MapCard(props: {
                 />
               </Field>
               <Field label="As-of date (optional)">
-                <input
+                <Input
                   type="date"
                   value={anchorDate}
                   onChange={(e) => setAnchorDate(e.target.value)}
@@ -938,21 +1012,21 @@ function MapCard(props: {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <button
+        <Button
           type="button"
           onClick={onContinue}
           disabled={continueDisabled}
-          className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded-full px-6 py-3 h-auto text-sm bg-mc-dark text-white hover:bg-mc-dark/85 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Continue &rarr;
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={onCancel}
-          className="inline-flex items-center px-6 py-3 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 font-medium text-sm hover:bg-mc-lavender/25 transition-colors"
+          className="rounded-full px-6 py-3 h-auto text-sm bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -1044,21 +1118,21 @@ function ConfirmCard(props: {
       )}
 
       <div className="flex flex-wrap gap-3">
-        <button
+        <Button
           type="button"
           onClick={onCommit}
           disabled={stats.valid === 0}
-          className="inline-flex items-center px-6 py-3 rounded-full bg-mc-dark text-white font-medium text-sm hover:bg-mc-dark/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded-full px-6 py-3 h-auto text-sm bg-mc-dark text-white hover:bg-mc-dark/85 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Import {stats.valid} row{stats.valid === 1 ? "" : "s"}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center px-6 py-3 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 font-medium text-sm hover:bg-mc-lavender/25 transition-colors"
+          className="rounded-full px-6 py-3 h-auto text-sm bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25"
         >
           &larr; Back
-        </button>
+        </Button>
         <Link
           href="/"
           className="inline-flex items-center px-6 py-3 rounded-full text-mc-gray hover:text-mc-dark font-medium text-sm transition-colors"
@@ -1100,32 +1174,32 @@ function PreviewTable({
     return <p className="mt-4 text-sm text-mc-gray">No rows.</p>;
   }
   return (
-    <div className="mt-4 overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead>
-          <tr className="text-xs uppercase tracking-wider text-mc-gray">
-            <th className="text-left py-2 pr-4">Date</th>
-            <th className="text-left py-2 pr-4">Description</th>
-            <th className="text-left py-2 pr-4">Kind</th>
-            <th className="text-right py-2 pr-4">Amount</th>
-            <th className="text-left py-2 pr-4">Category</th>
-            <th className="text-left py-2">Account</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-mc-gray/10">
+    <div className="mt-4">
+      <Table className="min-w-full text-sm">
+        <TableHeader>
+          <TableRow className="text-xs uppercase tracking-wider text-mc-gray">
+            <TableHead className="text-left py-2 pr-4">Date</TableHead>
+            <TableHead className="text-left py-2 pr-4">Description</TableHead>
+            <TableHead className="text-left py-2 pr-4">Kind</TableHead>
+            <TableHead className="text-right py-2 pr-4">Amount</TableHead>
+            <TableHead className="text-left py-2 pr-4">Category</TableHead>
+            <TableHead className="text-left py-2">Account</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody className="divide-y divide-mc-gray/10">
           {rows.map((r) => {
             const bad = r.errors.length > 0;
             return (
-              <tr key={r.index} className={bad ? "opacity-50" : ""}>
-                <td className="py-2 pr-4 font-mono text-mc-gray">
+              <TableRow key={r.index} className={bad ? "opacity-50" : ""}>
+                <TableCell className="py-2 pr-4 font-mono text-mc-gray">
                   {r.date ?? "—"}
-                </td>
-                <td className="py-2 pr-4 text-mc-dark max-w-xs truncate">
+                </TableCell>
+                <TableCell className="py-2 pr-4 text-mc-dark max-w-xs truncate">
                   {r.description || (
                     <span className="text-mc-gray italic">—</span>
                   )}
-                </td>
-                <td className="py-2 pr-4">
+                </TableCell>
+                <TableCell className="py-2 pr-4">
                   {r.kind ? (
                     <span
                       className={`text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -1139,8 +1213,8 @@ function PreviewTable({
                   ) : (
                     <span className="text-mc-gray">—</span>
                   )}
-                </td>
-                <td className="py-2 pr-4 text-right font-mono text-mc-dark">
+                </TableCell>
+                <TableCell className="py-2 pr-4 text-right font-mono text-mc-dark">
                   {r.amount !== null && r.kind ? (
                     <>
                       {r.kind === "income" ? "+" : "−"}
@@ -1149,8 +1223,8 @@ function PreviewTable({
                   ) : (
                     "—"
                   )}
-                </td>
-                <td className="py-2 pr-4">
+                </TableCell>
+                <TableCell className="py-2 pr-4">
                   {editable && r.kind && onCategoryChange ? (
                     <CategoryInput
                       value={r.category ?? ""}
@@ -1166,15 +1240,15 @@ function PreviewTable({
                       {UNCATEGORIZED_LABEL}
                     </span>
                   )}
-                </td>
-                <td className="py-2 text-mc-gray font-mono text-xs">
+                </TableCell>
+                <TableCell className="py-2 text-mc-gray font-mono text-xs">
                   {r.accountName || "—"}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
       {rows.some((r) => r.errors.length > 0) && (
         <p className="mt-3 text-xs text-mc-gray">
           Greyed-out rows have parse errors and will be skipped.

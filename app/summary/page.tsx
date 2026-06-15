@@ -18,6 +18,7 @@ import {
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
 import { Pagination } from "../components/Pagination";
+import { Button } from "@/app/components/ui/button";
 
 const TX_PAGE_SIZE = 20;
 const MA_WINDOWS = [7, 14, 30, 90] as const;
@@ -251,13 +252,15 @@ export default function SummaryPage() {
                       {activeCategory ?? "All categories"}
                     </p>
                     {activeCategory && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setSelectedCategory(null)}
-                        className="text-xs font-medium px-3 py-1 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
+                        className="h-auto text-xs font-medium px-3 py-1 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
                       >
                         Clear category
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -358,11 +361,12 @@ function CategoryColumn({
             const pct = max > 0 ? Math.max(2, (amt / max) * 100) : 0;
             const selected = selectedCategory === cat;
             return (
-              <button
+              <Button
                 key={cat}
                 type="button"
+                variant="ghost"
                 onClick={() => onSelect(cat)}
-                className={`block w-full rounded-lg p-3 text-left transition-colors ${
+                className={`h-auto block w-full rounded-lg p-3 text-left transition-colors ${
                   selected
                     ? "bg-mc-dark/[0.04] ring-1 ring-mc-dark/10"
                     : "hover:bg-mc-dark/[0.03]"
@@ -383,7 +387,7 @@ function CategoryColumn({
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-              </button>
+              </Button>
             );
           })
         )}
@@ -804,13 +808,15 @@ function BalanceChart({
       </div>
       {hasSelection && (
         <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onReset}
-            className="text-xs font-medium px-3 py-1 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
+            className="h-auto text-xs font-medium px-3 py-1 rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors"
           >
             Reset selection
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -898,18 +904,20 @@ function WindowSelector({
   return (
     <div className="inline-flex rounded-full border border-mc-gray/15 p-0.5">
       {MA_WINDOWS.map((w) => (
-        <button
+        <Button
           key={w}
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={() => onChange(w)}
-          className={`text-sm font-medium px-3 py-1 rounded-full transition-colors ${
+          className={`h-auto text-sm font-medium px-3 py-1 rounded-full transition-colors ${
             value === w
-              ? "bg-mc-dark text-white"
+              ? "bg-mc-dark text-white hover:bg-mc-dark"
               : "text-mc-gray hover:text-mc-dark"
           }`}
         >
           {w}d
-        </button>
+        </Button>
       ))}
     </div>
   );
