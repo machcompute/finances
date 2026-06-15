@@ -171,16 +171,6 @@ export default function EditPage() {
                   </Button>
                 ))}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleResync}
-                disabled={uncategorizedCount === 0}
-                title="Auto-match uncategorized transactions to categories you've already used"
-                className="text-sm font-medium px-4 py-2 h-auto rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Apply all suggestions
-              </Button>
             </div>
           </div>
 
@@ -199,6 +189,7 @@ export default function EditPage() {
               setThreshold={setThreshold}
               excludedIds={excludedIds}
               toggleExclude={toggleExclude}
+              onApply={handleResync}
             />
           )}
 
@@ -334,6 +325,7 @@ function ResyncPreview({
   setThreshold,
   excludedIds,
   toggleExclude,
+  onApply,
 }: {
   proposals: ReturnType<typeof previewResync>;
   proposalMatches: number;
@@ -341,6 +333,7 @@ function ResyncPreview({
   setThreshold: (n: number) => void;
   excludedIds: Set<string>;
   toggleExclude: (txId: string) => void;
+  onApply: () => void;
 }) {
   const matched = proposals.filter((p) => p.suggestedCategory !== null);
   const unmatched = proposals.length - matched.length;
@@ -432,6 +425,20 @@ function ResyncPreview({
               })}
             </TableBody>
           </Table>
+        </div>
+      )}
+
+      {matched.length > 0 && (
+        <div className="mt-4 flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onApply}
+            disabled={accepted === 0}
+            className="text-sm font-medium px-4 py-2 h-auto rounded-full bg-mc-lavender/15 text-mc-dark/80 border border-mc-lavender/20 hover:bg-mc-lavender/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Apply selected ({accepted})
+          </Button>
         </div>
       )}
     </div>
