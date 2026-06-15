@@ -55,6 +55,14 @@ function freshId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+export function transactionDedupKey(
+  tx: Pick<Transaction, "accountId" | "kind" | "amount" | "date" | "note">,
+): string {
+  const note = (tx.note ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const signed = (tx.kind === "expense" ? -tx.amount : tx.amount).toFixed(2);
+  return `${tx.accountId}|${tx.date}|${signed}|${note}`;
+}
+
 function subscribeTx(listener: () => void): () => void {
   txListeners.add(listener);
   return () => {
@@ -322,23 +330,33 @@ export function setTransactionCategory(
 
 export type BatchAddResult = {
   added: number;
+  skipped: number;
   categoriesAdded: number;
 };
+
+export type BatchDedupPreview = { willAdd: number; willSkip: number };
 
 export function addTransactionsBatch(
   txs: Omit<Transaction, "id">[],
 ): BatchAddResult {
   if (txs.length === 0) {
-    return { added: 0, categoriesAdded: 0 };
+    return { added: 0, skipped: 0, categoriesAdded: 0 };
   }
 
   const validAccountIds = new Set(accountStore.map((a) => a.id));
   const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
+  const seenKeys = new Set(txStore.map(transactionDedupKey));
   let categoriesAdded = 0;
+  let skipped = 0;
 
   const toAdd: Transaction[] = [];
   for (const draft of txs) {
     if (!validAccountIds.has(draft.accountId)) continue;
+    const key = transactionDedupKey(draft);
+    if (seenKeys.has(key)) {
+      skipped++;
+      continue;
+    }
     if (draft.category) {
       const lc = draft.category.toLowerCase();
       if (!seen.has(lc)) {
@@ -351,7 +369,24 @@ export function addTransactionsBatch(
 
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
-  return { added: toAdd.length, categoriesAdded };
+  return { added: toAdd.length, skipped, categoriesAdded };
+}
+
+export function previewBatchDedup(
+  txs: Omit<Transaction, "id">[],
+): BatchDedupPreview {
+  const seenKeys = new Set(txStore.map(transactionDedupKey));
+  let willAdd = 0;
+  let willSkip = 0;
+  for (const draft of txs) {
+    const key = transactionDedupKey(draft);
+    if (seenKeys.has(key)) {
+      willSkip++;
+      continue;
+    }
+    willAdd++;
+  }
+  return { willAdd, willSkip };
 }
 
 export function downloadOFX(filename = "finances.ofx"): void {

@@ -31,12 +31,14 @@ import { ParsedCSV, parseCSV } from "../lib/csv";
 const IMPORT_PAGE_SIZE = 20;
 import {
   Baseline,
+  BatchDedupPreview,
   Transaction,
   TransactionKind,
   UNCATEGORIZED_LABEL,
   addTransactionsBatch,
   formatAmount,
   getOrCreateAccountByName,
+  previewBatchDedup,
   pruneEmptySeededDefault,
   setBaseline,
   useAccounts,
@@ -201,6 +203,26 @@ export default function ImportPage() {
   }, [parsed, mapping, destinationName, overrides]);
 
   const stats = useMemo(() => computeStats(derived), [derived]);
+  const dedupPreview = useMemo<BatchDedupPreview>(() => {
+    if (!parsed) return { willAdd: 0, willSkip: 0 };
+    const idByLcName = new Map(
+      accounts.map((a) => [a.name.toLowerCase(), a.id] as const),
+    );
+    const drafts: Omit<Transaction, "id">[] = derived
+      .filter((r) => r.errors.length === 0)
+      .map((r) => {
+        const lc = r.accountName.toLowerCase();
+        return {
+          accountId: idByLcName.get(lc) ?? `new:${lc}`,
+          kind: r.kind!,
+          amount: r.amount!,
+          category: r.category,
+          date: r.date!,
+          note: r.description || undefined,
+        };
+      });
+    return previewBatchDedup(drafts);
+  }, [parsed, derived, accounts]);
   const baseline = useMemo(
     () =>
       computeBaseline({
@@ -257,6 +279,7 @@ export default function ImportPage() {
     if (newAccountCount > 0) pruneEmptySeededDefault();
     const parts = [
       `${result.added} added`,
+      `${result.skipped} skipped as duplicate${result.skipped === 1 ? "" : "s"}`,
       `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"}`,
     ];
     if (newAccountCount > 0) {
@@ -368,6 +391,7 @@ export default function ImportPage() {
             <ConfirmCard
               derived={derived}
               stats={stats}
+              dedup={dedupPreview}
               baseline={baseline}
               categories={categories}
               setOverride={(idx, cat) =>
@@ -1038,6 +1062,7 @@ function MapCard(props: {
 function ConfirmCard(props: {
   derived: DerivedRow[];
   stats: Stats;
+  dedup: BatchDedupPreview;
   baseline: Baseline | null;
   categories: string[];
   setOverride: (idx: number, cat: string) => void;
@@ -1048,6 +1073,7 @@ function ConfirmCard(props: {
   const {
     derived,
     stats,
+    dedup,
     baseline,
     categories,
     setOverride,
@@ -1074,8 +1100,10 @@ function ConfirmCard(props: {
       <div className="p-6 rounded-2xl border border-mc-gray/15 bg-white">
         <h2 className="text-lg font-semibold text-mc-dark">Review &amp; commit</h2>
         <p className="mt-2 text-sm text-mc-gray">
-          {stats.valid} ready · {stats.invalid} skipped · {stats.categorized}{" "}
-          categorized · {stats.uncategorized} uncategorized
+          {stats.valid} ready · {dedup.willSkip} duplicate
+          {dedup.willSkip === 1 ? "" : "s"} · {stats.invalid} error
+          {stats.invalid === 1 ? "" : "s"} · {stats.categorized} categorized ·{" "}
+          {stats.uncategorized} uncategorized
           {destinationName && (
             <>
               {" "}
@@ -1124,10 +1152,10 @@ function ConfirmCard(props: {
         <Button
           type="button"
           onClick={onCommit}
-          disabled={stats.valid === 0}
+          disabled={dedup.willAdd === 0}
           className="rounded-full px-6 py-3 h-auto text-sm bg-mc-dark text-white hover:bg-mc-dark/85 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Import {stats.valid} row{stats.valid === 1 ? "" : "s"}
+          Import {dedup.willAdd} row{dedup.willAdd === 1 ? "" : "s"}
         </Button>
         <Button
           type="button"
