@@ -26,19 +26,19 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
+import { Checkbox } from "../components/ui/checkbox";
 import { ParsedCSV, parseCSV } from "../lib/csv";
 
 const IMPORT_PAGE_SIZE = 20;
 import {
   Baseline,
-  BatchDedupPreview,
   Transaction,
   TransactionKind,
   UNCATEGORIZED_LABEL,
   addTransactionsBatch,
+  batchDedupFlags,
   formatAmount,
   getOrCreateAccountByName,
-  previewBatchDedup,
   pruneEmptySeededDefault,
   setBaseline,
   useAccounts,
@@ -106,8 +106,18 @@ export default function ImportPage() {
   const [anchorAmount, setAnchorAmount] = useState("");
   const [anchorDate, setAnchorDate] = useState("");
   const [overrides, setOverrides] = useState<Record<number, string>>({});
+  const [forced, setForced] = useState<Set<number>>(() => new Set());
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  function toggleForced(rowIndex: number) {
+    setForced((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowIndex)) next.delete(rowIndex);
+      else next.add(rowIndex);
+      return next;
+    });
+  }
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -124,6 +134,7 @@ export default function ImportPage() {
     setAnchorAmount("");
     setAnchorDate("");
     setOverrides({});
+    setForced(new Set());
     setImportStatus(null);
     setErrorMessage(null);
   }
@@ -142,6 +153,7 @@ export default function ImportPage() {
       setMapping(autoMap(p.headers));
       setStep("map");
       setOverrides({});
+      setForced(new Set());
     } catch {
       setErrorMessage("Could not read file.");
     }
@@ -203,26 +215,34 @@ export default function ImportPage() {
   }, [parsed, mapping, destinationName, overrides]);
 
   const stats = useMemo(() => computeStats(derived), [derived]);
-  const dedupPreview = useMemo<BatchDedupPreview>(() => {
-    if (!parsed) return { willAdd: 0, willSkip: 0 };
+  const validRows = useMemo(
+    () => derived.filter((r) => r.errors.length === 0),
+    [derived],
+  );
+  const dupFlags = useMemo(() => {
+    if (!parsed) return [] as boolean[];
     const idByLcName = new Map(
       accounts.map((a) => [a.name.toLowerCase(), a.id] as const),
     );
-    const drafts: Omit<Transaction, "id">[] = derived
-      .filter((r) => r.errors.length === 0)
-      .map((r) => {
-        const lc = r.accountName.toLowerCase();
-        return {
-          accountId: idByLcName.get(lc) ?? `new:${lc}`,
-          kind: r.kind!,
-          amount: r.amount!,
-          category: r.category,
-          date: r.date!,
-          note: r.description || undefined,
-        };
-      });
-    return previewBatchDedup(drafts);
-  }, [parsed, derived, accounts]);
+    const drafts: Omit<Transaction, "id">[] = validRows.map((r) => {
+      const lc = r.accountName.toLowerCase();
+      return {
+        accountId: idByLcName.get(lc) ?? `new:${lc}`,
+        kind: r.kind!,
+        amount: r.amount!,
+        category: r.category,
+        date: r.date!,
+        note: r.description || undefined,
+      };
+    });
+    return batchDedupFlags(drafts);
+  }, [parsed, validRows, accounts]);
+  const duplicateRows = useMemo(
+    () => validRows.filter((_, i) => dupFlags[i]),
+    [validRows, dupFlags],
+  );
+  const willSkip = duplicateRows.filter((r) => !forced.has(r.index)).length;
+  const willAdd = validRows.length - willSkip;
   const baseline = useMemo(
     () =>
       computeBaseline({
@@ -237,7 +257,6 @@ export default function ImportPage() {
   function commitImport() {
     if (!parsed) return;
 
-    const validRows = derived.filter((r) => r.errors.length === 0);
     if (validRows.length === 0) {
       setErrorMessage("Nothing to import — every row has errors.");
       return;
@@ -246,6 +265,12 @@ export default function ImportPage() {
       setErrorMessage("Pick a destination account first.");
       return;
     }
+
+    const skipIndices = new Set(
+      validRows
+        .filter((r, i) => dupFlags[i] && !forced.has(r.index))
+        .map((r) => r.index),
+    );
 
     const existingAccountIds = new Set(accounts.map((a) => a.id));
     const accountIdByLcName = new Map<string, string>();
@@ -263,6 +288,7 @@ export default function ImportPage() {
     const drafts: Omit<Transaction, "id">[] = [];
     let primaryAccountId = "";
     for (const r of validRows) {
+      if (skipIndices.has(r.index)) continue;
       const accountId = resolveAccountId(r.accountName);
       if (!primaryAccountId) primaryAccountId = accountId;
       drafts.push({
@@ -275,11 +301,11 @@ export default function ImportPage() {
       });
     }
 
-    const result = addTransactionsBatch(drafts);
+    const result = addTransactionsBatch(drafts, { dedupe: false });
     if (newAccountCount > 0) pruneEmptySeededDefault();
     const parts = [
       `${result.added} added`,
-      `${result.skipped} skipped as duplicate${result.skipped === 1 ? "" : "s"}`,
+      `${skipIndices.size} skipped as duplicate${skipIndices.size === 1 ? "" : "s"}`,
       `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"}`,
     ];
     if (newAccountCount > 0) {
@@ -391,7 +417,15 @@ export default function ImportPage() {
             <ConfirmCard
               derived={derived}
               stats={stats}
-              dedup={dedupPreview}
+              willAdd={willAdd}
+              willSkip={willSkip}
+              duplicateRows={duplicateRows}
+              forced={forced}
+              onToggleForced={toggleForced}
+              onForceAll={() =>
+                setForced(new Set(duplicateRows.map((r) => r.index)))
+              }
+              onSkipAll={() => setForced(new Set())}
               baseline={baseline}
               categories={categories}
               setOverride={(idx, cat) =>
@@ -1062,7 +1096,13 @@ function MapCard(props: {
 function ConfirmCard(props: {
   derived: DerivedRow[];
   stats: Stats;
-  dedup: BatchDedupPreview;
+  willAdd: number;
+  willSkip: number;
+  duplicateRows: DerivedRow[];
+  forced: Set<number>;
+  onToggleForced: (rowIndex: number) => void;
+  onForceAll: () => void;
+  onSkipAll: () => void;
   baseline: Baseline | null;
   categories: string[];
   setOverride: (idx: number, cat: string) => void;
@@ -1073,7 +1113,13 @@ function ConfirmCard(props: {
   const {
     derived,
     stats,
-    dedup,
+    willAdd,
+    willSkip,
+    duplicateRows,
+    forced,
+    onToggleForced,
+    onForceAll,
+    onSkipAll,
     baseline,
     categories,
     setOverride,
@@ -1100,8 +1146,8 @@ function ConfirmCard(props: {
       <div className="p-6 rounded-2xl border border-mc-gray/15 bg-white">
         <h2 className="text-lg font-semibold text-mc-dark">Review &amp; commit</h2>
         <p className="mt-2 text-sm text-mc-gray">
-          {stats.valid} ready · {dedup.willSkip} duplicate
-          {dedup.willSkip === 1 ? "" : "s"} · {stats.invalid} error
+          {willAdd} to import · {willSkip} duplicate
+          {willSkip === 1 ? "" : "s"} · {stats.invalid} error
           {stats.invalid === 1 ? "" : "s"} · {stats.categorized} categorized ·{" "}
           {stats.uncategorized} uncategorized
           {destinationName && (
@@ -1132,6 +1178,82 @@ function ConfirmCard(props: {
         />
       </div>
 
+      {duplicateRows.length > 0 && (
+        <div className="p-6 rounded-2xl border border-mc-lavender/40 bg-mc-lavender/[0.07]">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-mc-dark">
+                Possible duplicates
+              </h2>
+              <p className="mt-1 text-sm text-mc-gray">
+                {willSkip} of {duplicateRows.length} will be skipped — checked
+                rows already exist and will be merged. Uncheck a row to import it
+                anyway.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onSkipAll}
+                className="h-auto rounded-full px-3 py-1.5 bg-mc-lavender/15 text-mc-dark/80 hover:bg-mc-lavender/25"
+              >
+                Skip all
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onForceAll}
+                className="h-auto rounded-full px-3 py-1.5 bg-mc-lavender/15 text-mc-dark/80 hover:bg-mc-lavender/25"
+              >
+                Import all
+              </Button>
+            </div>
+          </div>
+          <div className="mt-4 max-h-64 overflow-y-auto rounded-lg border border-mc-gray/15 bg-white">
+            <Table className="min-w-full text-sm">
+              <TableHeader className="sticky top-0 bg-white">
+                <TableRow className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
+                  <TableHead className="py-2 px-3 w-12">Skip</TableHead>
+                  <TableHead className="text-left py-2 px-3">Date</TableHead>
+                  <TableHead className="text-left py-2 px-3">
+                    Description
+                  </TableHead>
+                  <TableHead className="text-right py-2 px-3">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-mc-gray/10">
+                {duplicateRows.map((r) => {
+                  const skip = !forced.has(r.index);
+                  return (
+                    <TableRow key={r.index} className={skip ? "" : "opacity-50"}>
+                      <TableCell className="py-2 px-3">
+                        <Checkbox
+                          checked={skip}
+                          onCheckedChange={() => onToggleForced(r.index)}
+                          aria-label={`Skip ${r.description || "row"}`}
+                        />
+                      </TableCell>
+                      <TableCell className="py-2 px-3 font-mono text-mc-gray">
+                        {r.date}
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-mc-dark max-w-md">
+                        <div className="truncate">{r.description || "—"}</div>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-right font-mono text-mc-dark">
+                        {r.amount != null ? formatAmount(r.amount) : "—"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
       {baseline && (
         <div className="p-6 rounded-2xl border border-mc-lime/40 bg-mc-lime/15">
           <h2 className="text-lg font-semibold text-mc-dark">
@@ -1152,10 +1274,10 @@ function ConfirmCard(props: {
         <Button
           type="button"
           onClick={onCommit}
-          disabled={dedup.willAdd === 0}
+          disabled={willAdd === 0}
           className="rounded-full px-6 py-3 h-auto text-sm bg-mc-dark text-white hover:bg-mc-dark/85 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Import {dedup.willAdd} row{dedup.willAdd === 1 ? "" : "s"}
+          Import {willAdd} row{willAdd === 1 ? "" : "s"}
         </Button>
         <Button
           type="button"

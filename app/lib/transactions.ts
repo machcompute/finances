@@ -75,6 +75,7 @@ function commitTx(next: Transaction[]): void {
   cachedIndexFor = null;
   cachedIndex = null;
   txListeners.forEach((l) => l());
+  persist();
 }
 
 function subscribeAccounts(listener: () => void): () => void {
@@ -87,6 +88,7 @@ function subscribeAccounts(listener: () => void): () => void {
 function commitAccounts(next: Account[]): void {
   accountStore = next;
   accountListeners.forEach((l) => l());
+  persist();
 }
 
 function subscribeBaselines(listener: () => void): () => void {
@@ -99,6 +101,7 @@ function subscribeBaselines(listener: () => void): () => void {
 function commitBaselines(next: Map<string, Baseline>): void {
   baselineStore = next;
   baselineListeners.forEach((l) => l());
+  persist();
 }
 
 function subscribeSelectedAccount(listener: () => void): () => void {
@@ -110,6 +113,68 @@ function subscribeSelectedAccount(listener: () => void): () => void {
 
 function commitSelectedAccount(next: string | null): void {
   selectedAccountIdStore = next;
+  selectedAccountListeners.forEach((l) => l());
+  persist();
+}
+
+const STORAGE_KEY = "finances:v1";
+let hydrated = false;
+
+type PersistedState = {
+  txs: Transaction[];
+  accounts: Account[];
+  baselines: [string, Baseline][];
+  selectedAccountId: string | null;
+};
+
+function persist(): void {
+  if (typeof window === "undefined" || !hydrated) return;
+  try {
+    const state: PersistedState = {
+      txs: txStore,
+      accounts: accountStore,
+      baselines: [...baselineStore.entries()],
+      selectedAccountId: selectedAccountIdStore,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
+export function hydratePersistedState(): void {
+  if (hydrated || typeof window === "undefined") return;
+  hydrated = true;
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  try {
+    const state = JSON.parse(raw) as Partial<PersistedState>;
+    if (Array.isArray(state.accounts) && state.accounts.length > 0) {
+      accountStore = state.accounts;
+    }
+    if (Array.isArray(state.txs)) {
+      txStore = state.txs;
+      cachedIndexFor = null;
+      cachedIndex = null;
+    }
+    if (Array.isArray(state.baselines)) {
+      baselineStore = new Map(state.baselines);
+    }
+    if (
+      typeof state.selectedAccountId === "string" ||
+      state.selectedAccountId === null
+    ) {
+      selectedAccountIdStore = state.selectedAccountId ?? null;
+    }
+  } catch {
+    return;
+  }
+  txListeners.forEach((l) => l());
+  accountListeners.forEach((l) => l());
+  baselineListeners.forEach((l) => l());
   selectedAccountListeners.forEach((l) => l());
 }
 
@@ -334,26 +399,27 @@ export type BatchAddResult = {
   categoriesAdded: number;
 };
 
-export type BatchDedupPreview = { willAdd: number; willSkip: number };
-
 export function addTransactionsBatch(
   txs: Omit<Transaction, "id">[],
+  options: { dedupe?: boolean } = {},
 ): BatchAddResult {
+  const dedupe = options.dedupe ?? true;
   if (txs.length === 0) {
     return { added: 0, skipped: 0, categoriesAdded: 0 };
   }
 
   const validAccountIds = new Set(accountStore.map((a) => a.id));
   const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
-  const seenKeys = new Set(txStore.map(transactionDedupKey));
+  const seenKeys = dedupe
+    ? new Set(txStore.map(transactionDedupKey))
+    : new Set<string>();
   let categoriesAdded = 0;
   let skipped = 0;
 
   const toAdd: Transaction[] = [];
   for (const draft of txs) {
     if (!validAccountIds.has(draft.accountId)) continue;
-    const key = transactionDedupKey(draft);
-    if (seenKeys.has(key)) {
+    if (dedupe && seenKeys.has(transactionDedupKey(draft))) {
       skipped++;
       continue;
     }
@@ -372,21 +438,9 @@ export function addTransactionsBatch(
   return { added: toAdd.length, skipped, categoriesAdded };
 }
 
-export function previewBatchDedup(
-  txs: Omit<Transaction, "id">[],
-): BatchDedupPreview {
+export function batchDedupFlags(txs: Omit<Transaction, "id">[]): boolean[] {
   const seenKeys = new Set(txStore.map(transactionDedupKey));
-  let willAdd = 0;
-  let willSkip = 0;
-  for (const draft of txs) {
-    const key = transactionDedupKey(draft);
-    if (seenKeys.has(key)) {
-      willSkip++;
-      continue;
-    }
-    willAdd++;
-  }
-  return { willAdd, willSkip };
+  return txs.map((draft) => seenKeys.has(transactionDedupKey(draft)));
 }
 
 export function downloadOFX(filename = "finances.ofx"): void {
