@@ -6,6 +6,7 @@ const NAV_LINKS = [
   { label: "Transactions", href: "/" },
   { label: "Summary", href: "/summary" },
   { label: "Edit", href: "/edit" },
+  { label: "Categories", href: "/categories" },
   { label: "Import", href: "/import" },
   { label: "Accounts", href: "/accounts" },
 ];

@@ -100,21 +100,16 @@ export default function TransactionsPage() {
       const result = importOFX(text, destinationAccountId);
       if (result.ok) {
         const parts = [
-          `Imported ${result.added} new transaction${result.added === 1 ? "" : "s"}`,
+          `Loaded ${result.added} transaction${result.added === 1 ? "" : "s"}`,
         ];
-        if (result.skipped > 0) {
-          parts.push(
-            `${result.skipped} duplicate${result.skipped === 1 ? "" : "s"} skipped`,
-          );
-        }
         if (result.categoriesAdded > 0) {
           parts.push(
-            `${result.categoriesAdded} new categor${result.categoriesAdded === 1 ? "y" : "ies"} added`,
+            `${result.categoriesAdded} categor${result.categoriesAdded === 1 ? "y" : "ies"} loaded`,
           );
         }
         if (result.accountsCreated > 0) {
           parts.push(
-            `${result.accountsCreated} new account${result.accountsCreated === 1 ? "" : "s"} created`,
+            `${result.accountsCreated} account${result.accountsCreated === 1 ? "" : "s"} loaded`,
           );
         }
         if (result.baselinesApplied > 0) {
@@ -122,7 +117,10 @@ export default function TransactionsPage() {
             `${result.baselinesApplied} baseline${result.baselinesApplied === 1 ? "" : "s"} restored`,
           );
         }
-        setImportMessage({ kind: "ok", text: `${parts.join(", ")}.` });
+        setImportMessage({
+          kind: "ok",
+          text: `${parts.join(", ")}. Existing data was replaced.`,
+        });
       } else {
         setImportMessage({ kind: "error", text: result.error });
       }

@@ -4,16 +4,19 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Nav } from "../components/Nav";
 import { Footer } from "../components/Footer";
-import {
-  CategoryDatalist,
-  CategoryInput,
-} from "../components/CategoryInput";
 import { Pagination } from "../components/Pagination";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Slider } from "../components/ui/slider";
 import { Checkbox } from "../components/ui/checkbox";
 import { Badge } from "../components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import {
   Table,
   TableHeader,
@@ -36,6 +39,7 @@ import {
 } from "../lib/transactions";
 
 const PAGE_SIZE = 20;
+const UNCATEGORIZED_OPTION = "__uncategorized__";
 
 type Filter = "uncategorized" | "all";
 
@@ -55,7 +59,6 @@ export default function EditPage() {
   const [resyncMessage, setResyncMessage] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [threshold, setThreshold] = useState(DEFAULT_SIMILARITY_THRESHOLD);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [excludedIds, setExcludedIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -71,7 +74,7 @@ export default function EditPage() {
     );
     const byFilter =
       filter === "uncategorized"
-        ? sorted.filter((t) => !t.category || t.id === editingId)
+        ? sorted.filter((t) => !t.category)
         : sorted;
     const query = search.trim().toLowerCase();
     if (!query) return byFilter;
@@ -80,7 +83,7 @@ export default function EditPage() {
         v?.toLowerCase().includes(query),
       ),
     );
-  }, [txs, filter, editingId, search, accountById]);
+  }, [txs, filter, search, accountById]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -214,7 +217,6 @@ export default function EditPage() {
               </p>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-mc-gray/15 bg-white">
-                <CategoryDatalist id="all-cats" options={categories} />
                 <Table className="min-w-full text-sm">
                   <TableHeader>
                     <TableRow className="text-xs uppercase tracking-wider text-mc-gray border-b border-mc-gray/10">
@@ -259,28 +261,47 @@ export default function EditPage() {
                             {formatAmount(tx.amount)}
                           </TableCell>
                           <TableCell className="py-3 px-4">
-                            <CategoryInput
-                              value={tx.category ?? ""}
-                              onChange={(v) =>
+                            <Select
+                              value={tx.category ?? UNCATEGORIZED_OPTION}
+                              onValueChange={(v) =>
                                 setTransactionCategory(
                                   tx.id,
-                                  v || undefined,
+                                  !v || v === UNCATEGORIZED_OPTION
+                                    ? undefined
+                                    : v,
                                 )
                               }
-                              onFocus={() => setEditingId(tx.id)}
-                              onBlur={() =>
-                                setEditingId((cur) =>
-                                  cur === tx.id ? null : cur,
-                                )
-                              }
-                              listId="all-cats"
-                              placeholder={UNCATEGORIZED_LABEL}
-                              className={`rounded-md border bg-white px-2 py-1 text-sm focus:outline-none focus:border-mc-lavender/60 transition-colors ${
-                                tx.category
-                                  ? "border-mc-gray/15 text-mc-dark"
-                                  : "border-mc-lavender/40 text-mc-gray italic"
-                              }`}
-                            />
+                              items={[
+                                {
+                                  value: UNCATEGORIZED_OPTION,
+                                  label: UNCATEGORIZED_LABEL,
+                                },
+                                ...categories.map((c) => ({
+                                  value: c,
+                                  label: c,
+                                })),
+                              ]}
+                            >
+                              <SelectTrigger
+                                className={`w-48 border-mc-gray/15 bg-white ${
+                                  tx.category
+                                    ? "text-mc-dark"
+                                    : "text-mc-gray italic"
+                                } focus-visible:border-mc-lavender/60 focus-visible:ring-0`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent align="start">
+                                <SelectItem value={UNCATEGORIZED_OPTION}>
+                                  {UNCATEGORIZED_LABEL}
+                                </SelectItem>
+                                {categories.map((c) => (
+                                  <SelectItem key={c} value={c}>
+                                    {c}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </TableCell>
                           {showAccountColumn && (
                             <TableCell className="py-3 px-4 text-mc-gray font-mono text-xs">
@@ -305,9 +326,11 @@ export default function EditPage() {
 
           {visible.length > 0 && (
             <p className="mt-6 text-xs text-mc-gray">
-              Type a new category name to create it on the fly. Existing
-              categories from other transactions of the same kind appear as
-              suggestions.
+              Categories are managed from the{" "}
+              <Link href="/categories" className="text-mc-dark underline">
+                Categories page
+              </Link>
+              .
             </p>
           )}
         </div>

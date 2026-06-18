@@ -1,5 +1,5 @@
 import { useMemo, useSyncExternalStore } from "react";
-import { exportToOFX, fitidFromId, parseOFX, ParsedOFXAccount } from "./ofx";
+import { exportToOFX, parseOFX, ParsedOFXAccount } from "./ofx";
 import { buildCategoryIndex, suggestCategoryFromIndex } from "./csv";
 
 export type TransactionKind = "income" | "expense";
@@ -31,6 +31,7 @@ const SERVER_TX_SNAPSHOT: Transaction[] = [];
 const SERVER_ACCOUNT_SNAPSHOT: Account[] = [
   { id: DEFAULT_ACCOUNT_ID, name: DEFAULT_ACCOUNT_NAME },
 ];
+const SERVER_CATEGORY_SNAPSHOT: string[] = [];
 const SERVER_BASELINES_SNAPSHOT: Map<string, Baseline> = new Map();
 const SERVER_SELECTED_ACCOUNT_SNAPSHOT: string | null = null;
 
@@ -38,6 +39,7 @@ let txStore: Transaction[] = [];
 let accountStore: Account[] = [
   { id: DEFAULT_ACCOUNT_ID, name: DEFAULT_ACCOUNT_NAME },
 ];
+let categoryStore: string[] = [];
 let baselineStore: Map<string, Baseline> = new Map();
 let selectedAccountIdStore: string | null = null;
 let cachedIndexFor: Transaction[] | null = null;
@@ -45,6 +47,7 @@ let cachedIndex: ReturnType<typeof buildCategoryIndex> | null = null;
 
 const txListeners = new Set<() => void>();
 const accountListeners = new Set<() => void>();
+const categoryListeners = new Set<() => void>();
 const baselineListeners = new Set<() => void>();
 const selectedAccountListeners = new Set<() => void>();
 
@@ -91,6 +94,19 @@ function commitAccounts(next: Account[]): void {
   persist();
 }
 
+function subscribeCategories(listener: () => void): () => void {
+  categoryListeners.add(listener);
+  return () => {
+    categoryListeners.delete(listener);
+  };
+}
+
+function commitCategories(next: string[]): void {
+  categoryStore = mergeCategoryNames(next);
+  categoryListeners.forEach((l) => l());
+  persist();
+}
+
 function subscribeBaselines(listener: () => void): () => void {
   baselineListeners.add(listener);
   return () => {
@@ -123,6 +139,7 @@ let hydrated = false;
 type PersistedState = {
   txs: Transaction[];
   accounts: Account[];
+  categories: string[];
   baselines: [string, Baseline][];
   selectedAccountId: string | null;
 };
@@ -133,6 +150,7 @@ function persist(): void {
     const state: PersistedState = {
       txs: txStore,
       accounts: accountStore,
+      categories: categoryStore,
       baselines: [...baselineStore.entries()],
       selectedAccountId: selectedAccountIdStore,
     };
@@ -160,6 +178,9 @@ export function hydratePersistedState(): void {
       cachedIndexFor = null;
       cachedIndex = null;
     }
+    if (Array.isArray(state.categories)) {
+      categoryStore = mergeCategoryNames(state.categories);
+    }
     if (Array.isArray(state.baselines)) {
       baselineStore = new Map(state.baselines);
     }
@@ -174,6 +195,7 @@ export function hydratePersistedState(): void {
   }
   txListeners.forEach((l) => l());
   accountListeners.forEach((l) => l());
+  categoryListeners.forEach((l) => l());
   baselineListeners.forEach((l) => l());
   selectedAccountListeners.forEach((l) => l());
 }
@@ -191,6 +213,48 @@ function deriveCategories(txs: Transaction[]): string[] {
     if (tx.category) set.add(tx.category);
   }
   return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeCategoryName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+function mergeCategoryNames(...lists: string[][]): string[] {
+  const byLc = new Map<string, string>();
+  for (const list of lists) {
+    for (const raw of list) {
+      const name = normalizeCategoryName(raw);
+      if (!name) continue;
+      const lc = name.toLowerCase();
+      if (!byLc.has(lc)) byLc.set(lc, name);
+    }
+  }
+  return [...byLc.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function addCategoriesInternal(names: Iterable<string | undefined>): number {
+  const known = new Set(getCategories().map((c) => c.toLowerCase()));
+  const explicit = new Set(categoryStore.map((c) => c.toLowerCase()));
+  const next = [...categoryStore];
+  let added = 0;
+
+  for (const raw of names) {
+    if (!raw) continue;
+    const name = normalizeCategoryName(raw);
+    if (!name) continue;
+    const lc = name.toLowerCase();
+    if (!known.has(lc)) {
+      known.add(lc);
+      added++;
+    }
+    if (!explicit.has(lc)) {
+      explicit.add(lc);
+      next.push(name);
+    }
+  }
+
+  if (next.length !== categoryStore.length) commitCategories(next);
+  return added;
 }
 
 export function useAccounts(): Account[] {
@@ -366,12 +430,116 @@ export function useFilteredTransactions(): Transaction[] {
 
 export function useCategories(): string[] {
   const txs = useTransactions();
-  return useMemo(() => deriveCategories(txs), [txs]);
+  const categories = useSyncExternalStore(
+    subscribeCategories,
+    () => categoryStore,
+    () => SERVER_CATEGORY_SNAPSHOT,
+  );
+  return useMemo(
+    () => mergeCategoryNames(categories, deriveCategories(txs)),
+    [categories, txs],
+  );
+}
+
+export function getCategories(): string[] {
+  return mergeCategoryNames(categoryStore, deriveCategories(txStore));
+}
+
+export type AddCategoryResult =
+  | { ok: true; category: string; created: boolean }
+  | { ok: false; error: string };
+
+export function addCategory(name: string): AddCategoryResult {
+  const category = normalizeCategoryName(name);
+  if (!category) return { ok: false, error: "Category name is required." };
+  const exists = getCategories().some(
+    (c) => c.toLowerCase() === category.toLowerCase(),
+  );
+  addCategoriesInternal([category]);
+  return { ok: true, category, created: !exists };
+}
+
+export type RenameCategoryResult =
+  | { ok: true; category: string; renamed: boolean }
+  | { ok: false; error: string };
+
+export function renameCategory(
+  oldName: string,
+  newName: string,
+): RenameCategoryResult {
+  const oldCategory = normalizeCategoryName(oldName);
+  const nextCategory = normalizeCategoryName(newName);
+  if (!oldCategory) return { ok: false, error: "Category is required." };
+  if (!nextCategory)
+    return { ok: false, error: "Category name is required." };
+  if (oldCategory.toLowerCase() === nextCategory.toLowerCase()) {
+    return { ok: true, category: oldCategory, renamed: false };
+  }
+  const duplicate = getCategories().some(
+    (c) =>
+      c.toLowerCase() === nextCategory.toLowerCase() &&
+      c.toLowerCase() !== oldCategory.toLowerCase(),
+  );
+  if (duplicate) {
+    return { ok: false, error: `${nextCategory} already exists.` };
+  }
+
+  const nextCategories = categoryStore.map((c) =>
+    c.toLowerCase() === oldCategory.toLowerCase() ? nextCategory : c,
+  );
+  if (
+    !nextCategories.some(
+      (c) => c.toLowerCase() === nextCategory.toLowerCase(),
+    )
+  ) {
+    nextCategories.push(nextCategory);
+  }
+  commitCategories(nextCategories);
+
+  let changed = false;
+  const nextTxs = txStore.map((tx) => {
+    if (tx.category?.toLowerCase() !== oldCategory.toLowerCase()) return tx;
+    changed = true;
+    return { ...tx, category: nextCategory };
+  });
+  if (changed) commitTx(nextTxs);
+
+  return { ok: true, category: nextCategory, renamed: true };
+}
+
+export type DeleteCategoryResult =
+  | { ok: true; category: string; affected: number }
+  | { ok: false; error: string };
+
+export function deleteCategory(name: string): DeleteCategoryResult {
+  const category = normalizeCategoryName(name);
+  if (!category) return { ok: false, error: "Category is required." };
+
+  const nextCategories = categoryStore.filter(
+    (c) => c.toLowerCase() !== category.toLowerCase(),
+  );
+  if (nextCategories.length !== categoryStore.length) {
+    commitCategories(nextCategories);
+  }
+
+  let affected = 0;
+  const nextTxs = txStore.map((tx) => {
+    if (tx.category?.toLowerCase() !== category.toLowerCase()) return tx;
+    affected++;
+    return { ...tx, category: undefined };
+  });
+  if (affected > 0) commitTx(nextTxs);
+
+  return { ok: true, category, affected };
 }
 
 export function addTransaction(tx: Omit<Transaction, "id">): void {
   if (!accountStore.some((a) => a.id === tx.accountId)) return;
-  commitTx([{ ...tx, id: freshId() }, ...txStore]);
+  const category = tx.category
+    ? normalizeCategoryName(tx.category)
+    : undefined;
+  if (category) addCategoriesInternal([category]);
+  commitTx([{ ...tx, category, id: freshId() }, ...txStore]);
 }
 
 export function removeTransaction(id: string): void {
@@ -382,10 +550,11 @@ export function setTransactionCategory(
   id: string,
   category: string | undefined,
 ): void {
+  const trimmed = category ? normalizeCategoryName(category) : undefined;
+  if (trimmed) addCategoriesInternal([trimmed]);
   let changed = false;
   const next = txStore.map((tx) => {
     if (tx.id !== id) return tx;
-    const trimmed = category?.trim() || undefined;
     if (tx.category === trimmed) return tx;
     changed = true;
     return { ...tx, category: trimmed };
@@ -433,11 +602,9 @@ export function addTransactionsBatch(
   }
 
   const validAccountIds = new Set(accountStore.map((a) => a.id));
-  const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
   const seenKeys = dedupe
     ? new Set(txStore.map(transactionDedupKey))
     : new Set<string>();
-  let categoriesAdded = 0;
   let skipped = 0;
 
   const toAdd: Transaction[] = [];
@@ -447,16 +614,13 @@ export function addTransactionsBatch(
       skipped++;
       continue;
     }
-    if (draft.category) {
-      const lc = draft.category.toLowerCase();
-      if (!seen.has(lc)) {
-        seen.add(lc);
-        categoriesAdded++;
-      }
-    }
-    toAdd.push({ ...draft, id: freshId() });
+    const category = draft.category
+      ? normalizeCategoryName(draft.category)
+      : undefined;
+    toAdd.push({ ...draft, category, id: freshId() });
   }
 
+  const categoriesAdded = addCategoriesInternal(toAdd.map((tx) => tx.category));
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
   return { added: toAdd.length, skipped, categoriesAdded };
@@ -501,45 +665,45 @@ export function importOFX(
   const parsed = parseOFX(text);
   if (!parsed.ok) return parsed;
 
-  if (!accountStore.some((a) => a.id === destinationAccountId)) {
+  const destinationAccount = accountStore.find(
+    (a) => a.id === destinationAccountId,
+  );
+  if (!destinationAccount) {
     return { ok: false, error: "Destination account no longer exists." };
   }
+  const fallbackAccount: Account = {
+    id: destinationAccount.id,
+    name: destinationAccount.name,
+    color: destinationAccount.color,
+    description: destinationAccount.description,
+  };
 
-  const existingIds = new Set(txStore.map((t) => fitidFromId(t.id)));
-  const seenCategories = new Set(
-    deriveCategories(txStore).map((c) => c.toLowerCase()),
-  );
-  let categoriesAdded = 0;
-
-  const accountsBefore = accountStore.length;
+  const nextAccounts: Account[] = [];
   const accountByLcName = new Map<string, Account>();
-  for (const a of accountStore) {
-    accountByLcName.set(a.name.toLowerCase(), a);
-  }
 
   function resolveAccount(parsedAccount: ParsedOFXAccount): string {
     if (parsedAccount.kind === "legacy" || parsedAccount.kind === "destination") {
-      return destinationAccountId;
+      const existing = accountByLcName.get(fallbackAccount.name.toLowerCase());
+      if (existing) return existing.id;
+      nextAccounts.push(fallbackAccount);
+      accountByLcName.set(fallbackAccount.name.toLowerCase(), fallbackAccount);
+      return fallbackAccount.id;
     }
     const lc = parsedAccount.name.toLowerCase();
     const existing = accountByLcName.get(lc);
     if (existing) return existing.id;
-    const created = addAccount(
-      parsedAccount.name,
-      undefined,
-      parsedAccount.description,
-    );
-    accountByLcName.set(lc, created);
-    return created.id;
+    const account: Account = {
+      id: freshId(),
+      name: parsedAccount.name,
+      description: parsedAccount.description,
+    };
+    nextAccounts.push(account);
+    accountByLcName.set(lc, account);
+    return account.id;
   }
 
   const toAdd: Transaction[] = [];
-  let skipped = 0;
   for (const p of parsed.transactions) {
-    if (existingIds.has(p.fitid)) {
-      skipped++;
-      continue;
-    }
     const kind: TransactionKind = p.amount >= 0 ? "income" : "expense";
 
     let memoCategory: string | undefined;
@@ -561,16 +725,8 @@ export function importOFX(
     ).trim();
     const category =
       rawCategory && rawCategory !== UNCATEGORIZED_LABEL
-        ? rawCategory
+        ? normalizeCategoryName(rawCategory)
         : undefined;
-
-    if (category) {
-      const lc = category.toLowerCase();
-      if (!seenCategories.has(lc)) {
-        seenCategories.add(lc);
-        categoriesAdded++;
-      }
-    }
 
     toAdd.push({
       id: p.fitid,
@@ -583,29 +739,36 @@ export function importOFX(
     });
   }
 
-  if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
-
   let baselinesApplied = 0;
+  const nextBaselines = new Map<string, Baseline>();
   if (parsed.baselines.length > 0) {
-    const next = new Map(baselineStore);
     for (const b of parsed.baselines) {
       const accountId = resolveAccount(b.account);
-      next.set(accountId, { amount: b.amount, date: b.date });
+      nextBaselines.set(accountId, { amount: b.amount, date: b.date });
       baselinesApplied++;
     }
-    commitBaselines(next);
   }
 
-  const accountsCreated = accountStore.length - accountsBefore;
-  if (accountsCreated > 0) pruneEmptySeededDefault();
+  if (nextAccounts.length === 0) {
+    nextAccounts.push(fallbackAccount);
+  }
+
+  const nextCategories = mergeCategoryNames(
+    toAdd.flatMap((tx) => (tx.category ? [tx.category] : [])),
+  );
+  commitAccounts(nextAccounts);
+  commitCategories(nextCategories);
+  commitTx(toAdd);
+  commitBaselines(nextBaselines);
+  commitSelectedAccount(nextAccounts[0]?.id ?? null);
 
   return {
     ok: true,
     added: toAdd.length,
-    skipped,
-    categoriesAdded,
+    skipped: 0,
+    categoriesAdded: nextCategories.length,
     baselinesApplied,
-    accountsCreated,
+    accountsCreated: nextAccounts.length,
   };
 }
 
@@ -640,6 +803,18 @@ export function summarize(txs: Transaction[]): Summary {
   }
   summary.balance = summary.totalIncome - summary.totalExpense;
   return summary;
+}
+
+export function calculateAnchoredBalance(
+  txs: Transaction[],
+  baseline: Baseline | null,
+): number {
+  let balance = baseline?.amount ?? 0;
+  for (const tx of txs) {
+    if (baseline && tx.date <= baseline.date) continue;
+    balance += tx.kind === "income" ? tx.amount : -tx.amount;
+  }
+  return Math.round(balance * 100) / 100;
 }
 
 export type ResyncResult = {

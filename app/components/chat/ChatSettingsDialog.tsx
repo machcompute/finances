@@ -13,6 +13,7 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Button } from "@/app/components/ui/button";
+import { Checkbox } from "@/app/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -204,6 +205,24 @@ export function ChatSettingsDialog({
             </div>
             {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
+          <label className="flex items-start gap-3 rounded-lg border border-mc-gray/15 bg-mc-dark/[0.02] p-3">
+            <Checkbox
+              checked={settings.requireApproval}
+              onCheckedChange={(checked) =>
+                setChatSettings({ requireApproval: checked === true })
+              }
+              className="mt-0.5"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-mc-dark">
+                Ask before applying assistant changes
+              </span>
+              <span className="mt-1 block text-xs leading-relaxed text-mc-gray">
+                Turn this off to let assistant tools update categories and
+                transaction annotations immediately.
+              </span>
+            </span>
+          </label>
         </div>
       </DialogContent>
     </Dialog>

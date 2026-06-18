@@ -19,9 +19,11 @@ import { Thread } from "@/app/components/assistant-ui/thread";
 import { getChatSettings } from "@/app/lib/chatSettings";
 import {
   queryTransactionsTool,
+  searchTransactionsTool,
   getSummaryTool,
   listAccountsTool,
   listCategoriesTool,
+  proposeCategoryTool,
   proposeAnnotationTool,
 } from "@/app/components/chat/tools";
 
@@ -34,11 +36,73 @@ function toOpenAIMessages(
       .filter((c): c is TextMessagePart => c.type === "text")
       .map((c) => c.text)
       .join("");
-    if (m.role === "user") result.push({ role: "user", content: text });
-    else if (m.role === "assistant")
+    if (m.role === "user") {
+      result.push({ role: "user", content: text });
+      continue;
+    }
+    if (m.role !== "assistant") continue;
+
+    const toolParts = m.content.filter(
+      (c): c is ToolCallMessagePart => c.type === "tool-call",
+    );
+    const completedToolParts = toolParts.filter(isReplayableToolCallPart);
+    if (completedToolParts.length === 0) {
+      if (!text) continue;
       result.push({ role: "assistant", content: text });
+      continue;
+    }
+
+    const toolCalls: OpenAI.ChatCompletionMessageToolCall[] =
+      completedToolParts.map((part) => ({
+        id: part.toolCallId,
+        type: "function",
+        function: {
+          name: part.toolName,
+          arguments: part.argsText || JSON.stringify(part.args ?? {}),
+        },
+      }));
+    result.push({
+      role: "assistant",
+      content: text || null,
+      tool_calls: toolCalls,
+    });
+
+    for (const part of completedToolParts) {
+      result.push({
+        role: "tool",
+        tool_call_id: part.toolCallId,
+        content: stringifyToolResult(part.result),
+      });
+    }
   }
   return result;
+}
+
+function isReplayableToolCallPart(part: ToolCallMessagePart): boolean {
+  return (
+    part.result !== undefined &&
+    Boolean(part.toolCallId) &&
+    Boolean(part.toolName) &&
+    isValidJson(part.argsText || JSON.stringify(part.args ?? {}))
+  );
+}
+
+function isValidJson(value: string): boolean {
+  try {
+    JSON.parse(value || "{}");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stringifyToolResult(result: unknown): string {
+  if (typeof result === "string") return result;
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return String(result);
+  }
 }
 
 const adapter: ChatModelAdapter = {
@@ -170,8 +234,7 @@ const adapter: ChatModelAdapter = {
             isError = true;
           }
         }
-        const resultStr =
-          typeof result === "string" ? result : JSON.stringify(result);
+        const resultStr = stringifyToolResult(result);
         parts[toolCallPartIdx[i]] = {
           ...(parts[toolCallPartIdx[i]] as ToolCallMessagePart),
           result,
@@ -185,24 +248,39 @@ const adapter: ChatModelAdapter = {
 };
 
 const SYSTEM_PROMPT = `\
-You are the assistant inside a personal finance tracker. Help the user understand their money and tidy up their records. Act decisively and use the tools rather than asking the user for details you can look up yourself.
+You are the assistant inside a personal finance tracker. Help the user inspect transactions, understand spending, and clean up records when they ask for it.
 
-Tools:
-- \`get_summary\` — totals (income, expense, balance) and per-category breakdown, optionally by date range or account.
-- \`query_transactions\` — find rows by account name, category, kind, date range, or description search; returns transaction ids.
-- \`list_accounts\` — account names and balances. \`list_categories\` — existing categories.
-- \`propose_annotation\` — set a category and/or note on transactions by id.
+Use tools for facts you can inspect. Do not ask the user for account names, categories, totals, balances, or transaction ids before checking the tools.
 
-Use account names (from \`list_accounts\`) — never invent ids. To annotate, call \`query_transactions\` to get the ids, then \`propose_annotation\`. The app shows the user a confirmation dialog and only applies the change if they approve, so don't ask for permission first — just propose; the tool result tells you whether they approved.
+Tool guidance:
+- \`list_accounts\`: account names, descriptions, transaction counts, and current balances including baselines.
+- \`get_summary\`: transaction totals and per-category breakdown for an optional account/date range. Its balance is net transaction flow for that range, not baseline-inclusive account balance.
+- \`list_categories\`: category names available in the app.
+- \`query_transactions\`: find rows by account name, exact category, kind, date range, or note search. Use it to inspect candidate rows; mention truncation when total > returned.
+- \`search_transactions\`: search rows by a query string across note, category, account, kind, date, and amount. Use it to inspect candidate rows.
+- \`propose_category\`: create a standalone category.
+- \`propose_annotation\`: set category and/or note changes for transactions matched by its required query and optional filters. It does not accept transaction ids. Category names must come from \`list_categories\`; create missing categories with \`propose_category\` before using them.
 
-Be concise. Dates are ISO (YYYY-MM-DD).`;
+Use account names from \`list_accounts\`, never invented ids. For edits, inspect candidate rows with \`query_transactions\` or \`search_transactions\`, then call \`propose_annotation\` with a query and filters that target those rows.
+
+Only propose edits when the user explicitly asks to change, categorize, rename, clean up, create a category, or update records. For analysis questions, inspect the data and answer; do not volunteer edits, cleanup plans, or category changes.
+
+For broad categorization or cleanup requests, do the work in high-confidence batches instead of asking the user to design the whole category system first. Call \`list_categories\`; reuse close existing categories; create obvious missing categories with \`propose_category\`; query uncategorized transactions in batches; then use \`propose_annotation\` with a query and filters for rows whose descriptions clearly match a category. Continue batch by batch while useful. If many rows remain ambiguous, summarize the uncertain patterns and ask one short clarification about those patterns only.
+
+Ask a clarification before editing only when there is no reasonable high-confidence action to take. Do not ask for permission to use tools, do not ask whether to suggest categories, and do not stop only because the dataset is larger than one tool batch.
+
+Category filters are exact. Use category "" or "uncategorized" for rows without a category.
+
+Be concise. Dates are ISO YYYY-MM-DD. When a date range is ambiguous, ask one short clarification. Do not provide tax, legal, or investment advice; explain what the user's records show.`;
 
 function ChatTools() {
   useAssistantInstructions(SYSTEM_PROMPT);
   useAssistantTool(queryTransactionsTool);
+  useAssistantTool(searchTransactionsTool);
   useAssistantTool(getSummaryTool);
   useAssistantTool(listAccountsTool);
   useAssistantTool(listCategoriesTool);
+  useAssistantTool(proposeCategoryTool);
   useAssistantTool(proposeAnnotationTool);
   return null;
 }

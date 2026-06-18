@@ -9,6 +9,7 @@ import { Input } from "@/app/components/ui/input";
 import {
   Account,
   addAccount,
+  calculateAnchoredBalance,
   clearBaseline,
   deleteAccount,
   formatAmount,
@@ -29,16 +30,24 @@ export default function AccountsPage() {
   const selectedAccountId = useSelectedAccountId();
 
   const stats = useMemo(() => {
-    const m = new Map<string, { count: number; balance: number }>();
+    const txsByAccount = new Map<string, typeof txs>();
     for (const a of accounts) {
-      const baseline = baselines.get(a.id)?.amount ?? 0;
-      m.set(a.id, { count: 0, balance: baseline });
+      txsByAccount.set(a.id, []);
     }
     for (const tx of txs) {
-      const s = m.get(tx.accountId);
-      if (!s) continue;
-      s.count++;
-      s.balance += tx.kind === "income" ? tx.amount : -tx.amount;
+      const accountTxs = txsByAccount.get(tx.accountId);
+      if (accountTxs) accountTxs.push(tx);
+    }
+    const m = new Map<string, { count: number; balance: number }>();
+    for (const a of accounts) {
+      const accountTxs = txsByAccount.get(a.id) ?? [];
+      m.set(a.id, {
+        count: accountTxs.length,
+        balance: calculateAnchoredBalance(
+          accountTxs,
+          baselines.get(a.id) ?? null,
+        ),
+      });
     }
     return m;
   }, [accounts, baselines, txs]);
@@ -122,17 +131,26 @@ export default function AccountsPage() {
           </form>
 
           <div className="space-y-4">
-            {accounts.map((a) => (
-              <AccountCard
-                key={a.id}
-                account={a}
-                count={stats.get(a.id)?.count ?? 0}
-                balance={stats.get(a.id)?.balance ?? 0}
-                baseline={baselines.get(a.id) ?? null}
-                isSelected={selectedAccountId === a.id}
-                isOnly={accounts.length === 1}
-              />
-            ))}
+            {accounts.map((a) => {
+              const baseline = baselines.get(a.id) ?? null;
+              return (
+                <AccountCard
+                  key={[
+                    a.id,
+                    a.name,
+                    a.description ?? "",
+                    baseline?.amount ?? "",
+                    baseline?.date ?? "",
+                  ].join(":")}
+                  account={a}
+                  count={stats.get(a.id)?.count ?? 0}
+                  balance={stats.get(a.id)?.balance ?? 0}
+                  baseline={baseline}
+                  isSelected={selectedAccountId === a.id}
+                  isOnly={accounts.length === 1}
+                />
+              );
+            })}
           </div>
         </div>
       </section>
@@ -182,7 +200,7 @@ function AccountCard({
   }
 
   function handleSaveBaseline() {
-    const n = parseFloat(baselineAmount);
+    const n = Number(baselineAmount.trim().replace(",", "."));
     if (!isFinite(n) || !baselineDate) return;
     setBaseline(account.id, n, baselineDate);
   }

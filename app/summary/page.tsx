@@ -28,27 +28,30 @@ import {
   Baseline,
   Transaction,
   UNCATEGORIZED_LABEL,
-  aggregateBaseline,
   formatAmount,
   summarize,
   useAccounts,
   useBaselines,
-  useFilteredTransactions,
   useSelectedAccountId,
+  useTransactions,
 } from "../lib/transactions";
 
 export default function SummaryPage() {
   const accounts = useAccounts();
   const selectedAccountId = useSelectedAccountId();
-  const txs = useFilteredTransactions();
+  const allTxs = useTransactions();
+  const txs = useMemo(
+    () =>
+      selectedAccountId
+        ? allTxs.filter((tx) => tx.accountId === selectedAccountId)
+        : [],
+    [allTxs, selectedAccountId],
+  );
   const baselines = useBaselines();
   const baseline = useMemo(() => {
     if (selectedAccountId) return baselines.get(selectedAccountId) ?? null;
-    return aggregateBaseline(
-      baselines,
-      accounts.map((a) => a.id),
-    );
-  }, [baselines, selectedAccountId, accounts]);
+    return null;
+  }, [baselines, selectedAccountId]);
   const accountById = useMemo(() => {
     const m = new Map<string, Account>();
     for (const a of accounts) m.set(a.id, a);
@@ -101,12 +104,14 @@ export default function SummaryPage() {
   const maxExpense = expenseEntries.reduce((m, [, v]) => Math.max(m, v), 0);
   const maxIncome = incomeEntries.reduce((m, [, v]) => Math.max(m, v), 0);
 
-  const currentBalance = filterActive
-    ? summary.balance
-    : (baseline?.amount ?? 0) + summary.balance;
-  const balanceDot = currentBalance >= 0 ? "bg-mc-mint" : "bg-mc-lavender";
+  const difference = summary.balance;
+  const differenceDot = difference >= 0 ? "bg-mc-mint" : "bg-mc-lavender";
+  const accountRequired = selectedAccountId === null;
   const empty = txs.length === 0;
   const filteredEmpty = filteredTxs.length === 0;
+  const emptyMessage = accountRequired
+    ? "Select an account to view its summary."
+    : "No transactions yet.";
 
   function toggleCategory(cat: string) {
     setSelectedCategory((prev) => (prev === cat ? null : cat));
@@ -146,7 +151,7 @@ export default function SummaryPage() {
           </p>
 
           {empty ? (
-            <p className="mt-12 text-mc-gray">No transactions yet.</p>
+            <p className="mt-12 text-mc-gray">{emptyMessage}</p>
           ) : (
             <div className="mt-12 p-6 rounded-2xl border border-mc-gray/15 bg-white">
               <BalanceChart
@@ -163,7 +168,7 @@ export default function SummaryPage() {
       <section className="py-20 lg:py-28 bg-mc-dark/[0.02]">
         <div className="max-w-7xl mx-auto px-6">
           {empty ? (
-            <p className="text-mc-gray">No transactions yet.</p>
+            <p className="text-mc-gray">{emptyMessage}</p>
           ) : filteredEmpty ? (
             <p className="text-mc-gray">No transactions in this selection.</p>
           ) : (
@@ -179,9 +184,9 @@ export default function SummaryPage() {
                 dotClass="bg-mc-lavender"
               />
               <SummaryCard
-                label={filterActive ? "Period balance" : "Balance"}
-                amount={currentBalance}
-                dotClass={balanceDot}
+                label={filterActive ? "Period difference" : "Difference"}
+                amount={difference}
+                dotClass={differenceDot}
                 signed
               />
             </div>
@@ -199,7 +204,7 @@ export default function SummaryPage() {
           </p>
 
           {empty ? (
-            <p className="mt-12 text-mc-gray">No transactions yet.</p>
+            <p className="mt-12 text-mc-gray">{emptyMessage}</p>
           ) : filteredEmpty ? (
             <p className="mt-12 text-mc-gray">
               No transactions match this date range.
@@ -287,12 +292,12 @@ export default function SummaryPage() {
                 key={activeCategory ?? "all"}
                 label={activeCategory ?? "All transactions"}
                 transactions={sectionTransactions}
-                showAccount={selectedAccountId === null}
+                showAccount={false}
                 accountById={accountById}
               />
             </div>
           ) : empty ? (
-            <p className="mt-12 text-mc-gray">No transactions yet.</p>
+            <p className="mt-12 text-mc-gray">{emptyMessage}</p>
           ) : (
             <p className="mt-12 text-mc-gray">
               No transactions in this selection.
@@ -546,24 +551,21 @@ function buildBalanceSeries(
     const sign = tx.kind === "income" ? 1 : -1;
     byDate.set(tx.date, (byDate.get(tx.date) ?? 0) + sign * tx.amount);
   }
-  const dates = [...byDate.keys()].sort();
-  let running = baseline?.amount ?? 0;
+  const dateSet = new Set(byDate.keys());
+  if (baseline) dateSet.add(baseline.date);
+  const dates = [...dateSet].sort();
+  const flowThroughBaseline =
+    baseline === null
+      ? 0
+      : dates.reduce(
+          (total, date) =>
+            date <= baseline.date ? total + (byDate.get(date) ?? 0) : total,
+          0,
+        );
+  let running =
+    baseline === null ? 0 : Math.round((baseline.amount - flowThroughBaseline) * 100) / 100;
   const points: BalancePoint[] = [];
-  if (baseline) {
-    points.push({
-      date: baseline.date,
-      balance: Math.round(running * 100) / 100,
-    });
-  }
   for (const date of dates) {
-    if (baseline && date <= baseline.date) {
-      running += byDate.get(date) ?? 0;
-      points[points.length - 1] = {
-        date: baseline.date,
-        balance: Math.round(running * 100) / 100,
-      };
-      continue;
-    }
     running += byDate.get(date) ?? 0;
     points.push({ date, balance: Math.round(running * 100) / 100 });
   }

@@ -6,6 +6,7 @@ export type ChatSettings = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  requireApproval: boolean;
 };
 
 const STORAGE_KEY = "finances:chat-settings";
@@ -13,6 +14,7 @@ const DEFAULTS: ChatSettings = {
   baseUrl: "http://localhost:11434/v1",
   apiKey: "",
   model: "",
+  requireApproval: true,
 };
 
 let settings: ChatSettings = DEFAULTS;
