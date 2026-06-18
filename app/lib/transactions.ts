@@ -55,6 +55,14 @@ function freshId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+export function transactionDedupKey(
+  tx: Pick<Transaction, "accountId" | "kind" | "amount" | "date" | "note">,
+): string {
+  const note = (tx.note ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const signed = (tx.kind === "expense" ? -tx.amount : tx.amount).toFixed(2);
+  return `${tx.accountId}|${tx.date}|${signed}|${note}`;
+}
+
 function subscribeTx(listener: () => void): () => void {
   txListeners.add(listener);
   return () => {
@@ -67,6 +75,7 @@ function commitTx(next: Transaction[]): void {
   cachedIndexFor = null;
   cachedIndex = null;
   txListeners.forEach((l) => l());
+  persist();
 }
 
 function subscribeAccounts(listener: () => void): () => void {
@@ -79,6 +88,7 @@ function subscribeAccounts(listener: () => void): () => void {
 function commitAccounts(next: Account[]): void {
   accountStore = next;
   accountListeners.forEach((l) => l());
+  persist();
 }
 
 function subscribeBaselines(listener: () => void): () => void {
@@ -91,6 +101,7 @@ function subscribeBaselines(listener: () => void): () => void {
 function commitBaselines(next: Map<string, Baseline>): void {
   baselineStore = next;
   baselineListeners.forEach((l) => l());
+  persist();
 }
 
 function subscribeSelectedAccount(listener: () => void): () => void {
@@ -102,6 +113,68 @@ function subscribeSelectedAccount(listener: () => void): () => void {
 
 function commitSelectedAccount(next: string | null): void {
   selectedAccountIdStore = next;
+  selectedAccountListeners.forEach((l) => l());
+  persist();
+}
+
+const STORAGE_KEY = "finances:v1";
+let hydrated = false;
+
+type PersistedState = {
+  txs: Transaction[];
+  accounts: Account[];
+  baselines: [string, Baseline][];
+  selectedAccountId: string | null;
+};
+
+function persist(): void {
+  if (typeof window === "undefined" || !hydrated) return;
+  try {
+    const state: PersistedState = {
+      txs: txStore,
+      accounts: accountStore,
+      baselines: [...baselineStore.entries()],
+      selectedAccountId: selectedAccountIdStore,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
+export function hydratePersistedState(): void {
+  if (hydrated || typeof window === "undefined") return;
+  hydrated = true;
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  try {
+    const state = JSON.parse(raw) as Partial<PersistedState>;
+    if (Array.isArray(state.accounts) && state.accounts.length > 0) {
+      accountStore = state.accounts;
+    }
+    if (Array.isArray(state.txs)) {
+      txStore = state.txs;
+      cachedIndexFor = null;
+      cachedIndex = null;
+    }
+    if (Array.isArray(state.baselines)) {
+      baselineStore = new Map(state.baselines);
+    }
+    if (
+      typeof state.selectedAccountId === "string" ||
+      state.selectedAccountId === null
+    ) {
+      selectedAccountIdStore = state.selectedAccountId ?? null;
+    }
+  } catch {
+    return;
+  }
+  txListeners.forEach((l) => l());
+  accountListeners.forEach((l) => l());
+  baselineListeners.forEach((l) => l());
   selectedAccountListeners.forEach((l) => l());
 }
 
@@ -322,23 +395,34 @@ export function setTransactionCategory(
 
 export type BatchAddResult = {
   added: number;
+  skipped: number;
   categoriesAdded: number;
 };
 
 export function addTransactionsBatch(
   txs: Omit<Transaction, "id">[],
+  options: { dedupe?: boolean } = {},
 ): BatchAddResult {
+  const dedupe = options.dedupe ?? true;
   if (txs.length === 0) {
-    return { added: 0, categoriesAdded: 0 };
+    return { added: 0, skipped: 0, categoriesAdded: 0 };
   }
 
   const validAccountIds = new Set(accountStore.map((a) => a.id));
   const seen = new Set(deriveCategories(txStore).map((c) => c.toLowerCase()));
+  const seenKeys = dedupe
+    ? new Set(txStore.map(transactionDedupKey))
+    : new Set<string>();
   let categoriesAdded = 0;
+  let skipped = 0;
 
   const toAdd: Transaction[] = [];
   for (const draft of txs) {
     if (!validAccountIds.has(draft.accountId)) continue;
+    if (dedupe && seenKeys.has(transactionDedupKey(draft))) {
+      skipped++;
+      continue;
+    }
     if (draft.category) {
       const lc = draft.category.toLowerCase();
       if (!seen.has(lc)) {
@@ -351,7 +435,12 @@ export function addTransactionsBatch(
 
   if (toAdd.length > 0) commitTx([...toAdd, ...txStore]);
 
-  return { added: toAdd.length, categoriesAdded };
+  return { added: toAdd.length, skipped, categoriesAdded };
+}
+
+export function batchDedupFlags(txs: Omit<Transaction, "id">[]): boolean[] {
+  const seenKeys = new Set(txStore.map(transactionDedupKey));
+  return txs.map((draft) => seenKeys.has(transactionDedupKey(draft)));
 }
 
 export function downloadOFX(filename = "finances.ofx"): void {
