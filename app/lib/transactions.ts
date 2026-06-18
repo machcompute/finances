@@ -393,6 +393,30 @@ export function setTransactionCategory(
   if (changed) commitTx(next);
 }
 
+export function setTransactionNote(id: string, note: string | undefined): void {
+  let changed = false;
+  const next = txStore.map((tx) => {
+    if (tx.id !== id) return tx;
+    const trimmed = note?.trim() || undefined;
+    if (tx.note === trimmed) return tx;
+    changed = true;
+    return { ...tx, note: trimmed };
+  });
+  if (changed) commitTx(next);
+}
+
+export function getTransactions(): Transaction[] {
+  return txStore;
+}
+
+export function getAccounts(): Account[] {
+  return accountStore;
+}
+
+export function getBaselines(): Map<string, Baseline> {
+  return baselineStore;
+}
+
 export type BatchAddResult = {
   added: number;
   skipped: number;
